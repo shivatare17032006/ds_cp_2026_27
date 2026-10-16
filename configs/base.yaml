@@ -1,0 +1,54 @@
+project:
+  seed: 42
+  dataset: store_sales
+  horizon_days: 14
+
+paths:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  artifacts_dir: data/artifacts
+
+dataset:
+  # Store Sales is the first prototype because its train schema is compact.
+  # Set dataset to favorita and provide the additional table paths when ready.
+  store_sales:
+    train: train.csv
+    stores: stores.csv
+    oil: oil.csv
+    holidays_events: holidays_events.csv
+    transactions: transactions.csv
+  favorita:
+    train: train.csv
+    items: items.csv
+    stores: stores.csv
+    oil: oil.csv
+    holidays_events: holidays_events.csv
+    transactions: transactions.csv
+
+scope:
+  families:
+    - PRODUCE
+    - DAIRY
+    - MEATS
+    - POULTRY
+    - BAKERY
+    - DELI
+    - EGGS
+    - SEAFOOD
+    - PREPARED FOODS
+  stores: []
+  items: []
+
+assumptions:
+  shelf_life_days:
+    default: 7
+    PRODUCE: 3
+    DAIRY: 10
+    MEATS: 5
+    POULTRY: 5
+    BAKERY: 3
+    DELI: 5
+    EGGS: 21
+    SEAFOOD: 3
+    PREPARED FOODS: 2

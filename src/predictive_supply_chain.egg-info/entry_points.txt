@@ -1,0 +1,2 @@
+[console_scripts]
+freshcast-pipeline = src.pipeline:main
