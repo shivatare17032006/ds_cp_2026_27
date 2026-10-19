@@ -16,21 +16,26 @@ def run(config_path: str | Path) -> Path:
     """Convert raw data and write the processed feature table."""
     config = load_config(config_path)
     convert_raw_to_parquet(config)
-    train_path = config.interim_dir / "train.parquet"
-    features = build_features(
-        pl.scan_parquet(train_path), horizon=int(config.values["project"]["horizon_days"])
-    )
+    horizon = int(config.values["project"]["horizon_days"])
     context = {}
-    for table in ("holidays_events", "oil", "transactions", "stores"):
+    for table in ("holidays_events", "oil", "transactions", "stores", "test"):
+        if table not in config.dataset_files:
+            continue
         path = config.interim_dir / f"{table}.parquet"
         if path.exists():
             context[table] = pl.scan_parquet(path)
+    features = build_features(
+        pl.scan_parquet(config.interim_dir / "train.parquet"),
+        horizon=horizon,
+        future=context.get("test"),
+    )
     features = join_context(
         features,
         holidays=context.get("holidays_events"),
         oil=context.get("oil"),
         transactions=context.get("transactions"),
         stores=context.get("stores"),
+        horizon=horizon,
     )
     output = config.root / config.values["paths"]["processed_dir"] / "features.parquet"
     output.parent.mkdir(parents=True, exist_ok=True)

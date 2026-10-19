@@ -25,7 +25,7 @@ def seasonal_naive(frame: pd.DataFrame, horizon: int = 14, season: int = 7) -> p
     data = frame.sort_values(["store_nbr", "family", "date"]).copy()
     data["forecast"] = data.groupby(["store_nbr", "family"])["sales"].shift(season)
     data["forecast"] = data["forecast"].fillna(0).clip(lower=0)
-    return data.tail(horizon)
+    return data.groupby(["store_nbr", "family"], observed=True).tail(horizon)
 
 
 def moving_average(frame: pd.DataFrame, window: int = 14, horizon: int = 14) -> pd.DataFrame:
@@ -61,9 +61,47 @@ def _make_estimator(model_name: str, seed: int) -> Any:
         return XGBRegressor(
             n_estimators=300, max_depth=8, learning_rate=0.05,
             subsample=0.85, colsample_bytree=0.85, random_state=seed,
-            objective="reg:squarederror", n_jobs=2
+            objective="reg:squarederror", n_jobs=2,
+            tree_method="hist", enable_categorical=True,
         )
     raise ValueError(f"Unsupported model: {model_name}")
+
+
+NON_FEATURE_COLUMNS = {"date", "sales", "target", "store_id"}
+WARMUP_PREFIXES = ("sales_", "zero_rate_")
+
+
+def prepare_features(features: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Return model-ready features and the feature column list.
+
+    String columns become ``category`` with one category set for the whole
+    frame, so training and forecast rows share the same encoding. Tree models
+    use these natively.
+    """
+    frame = features.copy()
+    feature_columns = [c for c in frame.columns if c not in NON_FEATURE_COLUMNS]
+    for column in feature_columns:
+        dtype = frame[column].dtype
+        if not isinstance(dtype, pd.CategoricalDtype) and (
+            pd.api.types.is_object_dtype(dtype) or pd.api.types.is_string_dtype(dtype)
+        ):
+            frame[column] = frame[column].astype("category")
+    return frame, feature_columns
+
+
+def split_history_future(
+    frame: pd.DataFrame, feature_columns: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split into trainable history and the forecast rows (null target).
+
+    History rows are dropped only while demand lags are still warming up;
+    other missing context values (e.g. store-days without transactions) are
+    left for the tree model to handle.
+    """
+    warmup = [c for c in feature_columns if c.startswith(WARMUP_PREFIXES)]
+    history = frame[frame["target"].notna()].dropna(subset=warmup)
+    future = frame[frame["target"].isna()]
+    return history, future
 
 
 def train_global_model(
@@ -72,27 +110,27 @@ def train_global_model(
     model_name: str = "lightgbm",
     seed: int = 42,
 ) -> tuple[Any, pd.DataFrame, list[str]]:
-    """Train a global regressor and produce a future forecast table."""
-    excluded = {"date", "sales", "target", "family", "store_id"}
-    feature_columns = [c for c in features.columns if c not in excluded]
-    train = features.dropna(subset=feature_columns + ["target"]).copy()
-    if train.empty:
+    """Train a global regressor and forecast the future rows of the feature table.
+
+    ``features`` must include the forecast dates appended by
+    ``build_features(..., forecast_rows=True)``. The forecast has one row per
+    entity and future date, with ``horizon_day`` 1..``horizon``.
+    """
+    frame, feature_columns = prepare_features(features)
+    frame["date"] = pd.to_datetime(frame["date"])
+    history, future = split_history_future(frame, feature_columns)
+    if history.empty:
         raise ValueError("No rows remain after removing unavailable lag features.")
-    categorical = [c for c in feature_columns if str(train[c].dtype) in {"object", "category"}]
-    for column in categorical:
-        train[column] = train[column].astype("category").cat.codes
+    if future.empty:
+        raise ValueError("No forecast rows found; build features with forecast_rows=True.")
     estimator = _make_estimator(model_name, seed)
-    estimator.fit(train[feature_columns], train["target"])
-    latest = features.sort_values(["store_nbr", "family", "date"]).groupby(
-        ["store_nbr", "family"], observed=True
-    ).tail(1)
-    latest = latest.copy()
-    for column in categorical:
-        latest[column] = latest[column].astype("category").cat.codes
-    latest["forecast_log"] = estimator.predict(latest[feature_columns])
-    latest["forecast"] = np.expm1(latest["forecast_log"]).clip(0)
-    latest["date"] = pd.to_datetime(latest["date"]) + pd.Timedelta(days=1)
-    return estimator, latest[["store_nbr", "family", "date", "forecast"]], feature_columns
+    estimator.fit(history[feature_columns], history["target"])
+    forecast = future[["store_nbr", "family", "date"]].copy()
+    forecast["family"] = forecast["family"].astype(str)
+    forecast["horizon_day"] = (forecast["date"] - history["date"].max()).dt.days
+    forecast["forecast"] = np.expm1(estimator.predict(future[feature_columns])).clip(0)
+    forecast = forecast[forecast["horizon_day"].between(1, horizon)]
+    return estimator, forecast.reset_index(drop=True), feature_columns
 
 
 def evaluate(actual: np.ndarray, prediction: np.ndarray, training: np.ndarray | None = None) -> dict[str, float]:

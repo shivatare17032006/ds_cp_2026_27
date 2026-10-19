@@ -2,6 +2,10 @@
 
 Review of `shivatare17032006/ds_cp_2026_27` at commit `6fb86b7` (single commit, ~1,000 LOC).
 
+**Progress:** Phase 1 and Phase 2 are done (P0 #1–11, plus the pytest path from #12).
+Still open from P0 #12: the packaging/entry-point layout. The dashboard's
+`No module named 'src'` crash was fixed along the way.
+
 ## Summary
 
 The structure is good: a clean `src/` layout, Polars-based lazy ingestion, a YAML config,

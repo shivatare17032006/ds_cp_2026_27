@@ -18,6 +18,7 @@ dataset:
     oil: oil.csv
     holidays_events: holidays_events.csv
     transactions: transactions.csv
+    test: test.csv  # optional: future promotions for the forecast dates
   favorita:
     train: train.csv
     items: items.csv

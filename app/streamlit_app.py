@@ -2,34 +2,37 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from src.waste import compare_policies
-
 ROOT = Path(__file__).resolve().parents[1]
+# `streamlit run app/streamlit_app.py` only puts app/ on the path.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.waste import compare_policies  # noqa: E402
 FEATURE_PATH = ROOT / "data" / "processed" / "features.parquet"
 FORECAST_PATH = ROOT / "data" / "artifacts" / "forecast.parquet"
 
 
 @st.cache_data
-def load_data() -> pd.DataFrame:
+def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return observed history and the model's future forecast (may be empty)."""
+    future = pd.DataFrame(columns=["store_nbr", "family", "date", "forecast"])
     if FEATURE_PATH.exists():
-        frame = pd.read_parquet(FEATURE_PATH)
+        frame = pd.read_parquet(FEATURE_PATH, columns=["date", "store_nbr", "family", "sales"])
+        # Forecast rows appended by the feature build have no observed sales.
+        frame = frame[frame["sales"].notna()].copy()
+        frame["date"] = pd.to_datetime(frame["date"])
         if FORECAST_PATH.exists():
-            forecast = pd.read_parquet(FORECAST_PATH)
-            forecast["date"] = pd.to_datetime(forecast["date"])
-            frame["date"] = pd.to_datetime(frame["date"])
-            frame = frame.merge(
-                forecast.rename(columns={"forecast": "model_forecast"}),
-                on=["store_nbr", "family", "date"],
-                how="left",
-            )
-        return frame
+            future = pd.read_parquet(FORECAST_PATH)
+            future["date"] = pd.to_datetime(future["date"])
+        return frame, future
     dates = pd.date_range("2024-01-01", periods=120, freq="D")
-    return pd.DataFrame(
+    demo = pd.DataFrame(
         {
             "date": list(dates) * 2,
             "store_nbr": [1] * 120 + [2] * 120,
@@ -38,6 +41,7 @@ def load_data() -> pd.DataFrame:
             "forecast": [11.0] * 240,
         }
     )
+    return demo, future
 
 
 st.set_page_config(page_title="FreshCast | Supply Chain Control Tower", page_icon="🥬", layout="wide")
@@ -59,7 +63,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-data = load_data()
+data, future_forecast = load_data()
 st.sidebar.header("Scenario controls")
 stores = sorted(data["store_nbr"].dropna().unique().tolist())
 families = sorted(data["family"].dropna().astype(str).unique().tolist())
@@ -70,15 +74,23 @@ shelf_life = st.sidebar.slider("Shelf life (days)", min_value=1, max_value=30, v
 selection = data[(data["store_nbr"] == store) & (data["family"].astype(str) == family)].copy()
 selection["date"] = pd.to_datetime(selection["date"])
 selection = selection.sort_values("date")
-if "model_forecast" in selection and selection["model_forecast"].notna().any():
-    selection["forecast"] = selection["model_forecast"].fillna(0)
-elif "forecast" not in selection:
+if "forecast" not in selection:
+    # Historical baseline used for the policy simulation; the model only
+    # forecasts future dates.
     selection["forecast"] = selection["sales"].rolling(14, min_periods=1).mean().shift(1).fillna(0)
-selection["lower"] = (selection["forecast"] * 0.75).clip(lower=0)
-selection["upper"] = selection["forecast"] * 1.25
+future = future_forecast[
+    (future_forecast["store_nbr"] == store) & (future_forecast["family"].astype(str) == family)
+].sort_values("date")
 
-latest = selection.tail(28)
-forecast_value = float(selection["forecast"].iloc[-1])
+latest = selection.tail(28)[["date", "sales", "forecast"]]
+if future.empty:
+    forecast_value = float(selection["forecast"].iloc[-1])
+    plotted = latest
+else:
+    forecast_value = float(future["forecast"].iloc[0])
+    plotted = pd.concat([latest, future[["date", "forecast"]]], ignore_index=True)
+plotted["lower"] = (plotted["forecast"] * 0.75).clip(lower=0)
+plotted["upper"] = plotted["forecast"] * 1.25
 avg_sales = float(selection["sales"].tail(28).mean())
 stockout_risk = max(0.0, 1.0 - forecast_value / max(avg_sales, 1.0))
 
@@ -89,7 +101,11 @@ metric_cols[2].metric("Stockout risk", f"{stockout_risk:.1%}")
 metric_cols[3].metric("Data coverage", f"{len(selection):,} days")
 
 st.subheader("Demand and forecast")
-chart = latest.set_index("date")[["sales", "forecast", "lower", "upper"]].rename(
+if future.empty:
+    st.caption("No model forecast found; run `python -m src.train`. Showing a 14-day moving average.")
+else:
+    st.caption(f"Model forecast for the next {len(future)} days follows the observed history.")
+chart = plotted.set_index("date")[["sales", "forecast", "lower", "upper"]].rename(
     columns={"sales": "Observed sales", "forecast": "Forecast"}
 )
 st.line_chart(chart)

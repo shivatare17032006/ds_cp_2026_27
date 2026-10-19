@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import timedelta
 from pathlib import Path
 
 import polars as pl
@@ -96,37 +96,52 @@ def join_context(
     oil: pl.LazyFrame | None = None,
     transactions: pl.LazyFrame | None = None,
     stores: pl.LazyFrame | None = None,
+    horizon: int = 14,
 ) -> pl.LazyFrame:
     """Join optional context tables without changing the target grain.
 
-    Holiday proximity is computed from the closest holiday date. Oil prices are
-    forward-filled by date after joining to the feature calendar. Auxiliary
-    tables are optional because the Store Sales prototype may be run with only
-    its train table.
+    Store attributes and holidays are known in advance and join on the target
+    date. Transactions and oil prices are only observed after the fact, so
+    they are joined as of ``date - horizon`` (``transactions_lag_<h>``,
+    ``oil_price_lag_<h>``): a direct ``horizon``-day forecast can use them.
+    Auxiliary tables are optional because the Store Sales prototype may be
+    run with only its train table.
     """
+    if horizon < 1:
+        raise ValueError("horizon must be positive")
     result = features
+    store_dtype = result.collect_schema().get("store_nbr", pl.Int32)
+    lag = pl.duration(days=horizon)
     if stores is not None and "store_nbr" in stores.collect_schema().names():
-        result = result.join(stores, on="store_nbr", how="left")
+        result = result.join(
+            stores.with_columns(pl.col("store_nbr").cast(store_dtype)), on="store_nbr", how="left"
+        )
     if transactions is not None:
         transaction_columns = set(transactions.collect_schema().names())
-        if {"date", "store_nbr"}.issubset(transaction_columns):
+        if {"date", "store_nbr", "transactions"}.issubset(transaction_columns):
             result = result.join(
                 transactions.select(
-                    ["date", "store_nbr"] + [c for c in ["transactions"] if c in transaction_columns]
+                    (pl.col("date").cast(pl.Date) + lag).alias("date"),
+                    pl.col("store_nbr").cast(store_dtype),
+                    pl.col("transactions")
+                    .cast(pl.Float64, strict=False)
+                    .alias(f"transactions_lag_{horizon}"),
                 ),
                 on=["date", "store_nbr"],
                 how="left",
             )
-    if oil is not None and "date" in oil.collect_schema().names():
-        oil_prices = oil.select(
-            pl.col("date").cast(pl.Date),
-            pl.col("dcoilwtico").cast(pl.Float64, strict=False).alias("oil_price"),
-        ).sort("date").set_sorted("date")
-        result = result.sort("date").join_asof(
-            oil_prices, on="date", strategy="backward"
-        ).with_columns(
-            pl.col("oil_price").forward_fill()
+    if oil is not None and {"date", "dcoilwtico"}.issubset(oil.collect_schema().names()):
+        # Oil is missing on non-trading days; the as-of join carries the
+        # latest known price forward.
+        oil_prices = (
+            oil.select(
+                (pl.col("date").cast(pl.Date) + lag).alias("date"),
+                pl.col("dcoilwtico").cast(pl.Float64, strict=False).alias(f"oil_price_lag_{horizon}"),
+            )
+            .drop_nulls()
+            .sort("date")
         )
+        result = result.sort("date").join_asof(oil_prices, on="date", strategy="backward")
     if holidays is not None and "date" in holidays.collect_schema().names():
         result = _join_holiday_flag(result, holidays)
     return result
@@ -178,9 +193,61 @@ def _join_holiday_flag(features: pl.LazyFrame, holidays: pl.LazyFrame) -> pl.Laz
     ).drop(flags)
 
 
-def build_features(train: pl.LazyFrame, horizon: int = 14) -> pl.LazyFrame:
-    """Build the complete dense feature table from normalized training data."""
-    return add_features(build_complete_grid(train), horizon=horizon)
+def append_future(
+    grid: pl.LazyFrame, horizon: int, future: pl.LazyFrame | None = None
+) -> pl.LazyFrame:
+    """Append ``horizon`` forecast dates per entity with unknown (null) sales.
+
+    Lag features shifted by ``horizon`` stay computable on these rows, which
+    is what lets the model forecast t+1..t+h. Promotions are known in advance:
+    they are taken from ``future`` (e.g. Kaggle's ``test.csv``) when given,
+    otherwise assumed to be zero.
+    """
+    keys = ["store_nbr", "family", "date"]
+    schema = grid.collect_schema()
+    last = grid.select(pl.col("date").max()).collect().item()
+    if last is None:
+        raise ValueError("Cannot append forecast dates to an empty grid")
+    dates = pl.DataFrame(
+        {"date": pl.date_range(last + timedelta(days=1), last + timedelta(days=horizon), eager=True)}
+    ).lazy()
+    rows = (
+        grid.select(["store_nbr", "family"]).unique().join(dates, how="cross")
+        .with_columns(pl.lit(None, dtype=pl.Float64).alias("sales"))
+    )
+    if future is not None:
+        promotions = future.select(
+            pl.col("store_nbr").cast(schema["store_nbr"]),
+            pl.col("family").cast(pl.String),
+            pl.col("date").cast(pl.Date),
+            pl.col("onpromotion").cast(pl.Int32, strict=False),
+        ).group_by(keys).agg(pl.col("onpromotion").max())
+        rows = rows.join(promotions, on=keys, how="left")
+    else:
+        rows = rows.with_columns(pl.lit(None, dtype=pl.Int32).alias("onpromotion"))
+    rows = rows.with_columns(pl.col("onpromotion").fill_null(0))
+    rows = rows.select([pl.col(name).cast(dtype) for name, dtype in schema.items()])
+    return pl.concat([grid, rows]).sort(keys)
+
+
+def build_features(
+    train: pl.LazyFrame,
+    horizon: int = 14,
+    *,
+    forecast_rows: bool = True,
+    future: pl.LazyFrame | None = None,
+) -> pl.LazyFrame:
+    """Build the complete dense feature table from normalized training data.
+
+    With ``forecast_rows`` the table also holds ``horizon`` future dates per
+    entity; they have null ``sales``/``target`` and are what the model
+    forecasts. Consumers that need history only should filter on non-null
+    ``sales``.
+    """
+    grid = build_complete_grid(train)
+    if forecast_rows:
+        grid = append_future(grid, horizon, future)
+    return add_features(grid, horizon=horizon)
 
 
 def write_features(train_path: str | Path, output_path: str | Path, horizon: int = 14) -> None:

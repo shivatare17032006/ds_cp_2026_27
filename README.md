@@ -32,6 +32,7 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,modeling,app]"
 python -m src.pipeline --config configs\base.yaml
+python -m src.train
 pytest
 ```
 
@@ -39,6 +40,13 @@ The pipeline validates the configured raw files, writes normalized Parquet
 tables to `data/interim/`, and writes leakage-safe features to
 `data/processed/features.parquet`. It does not download Kaggle data or infer
 credentials.
+
+The feature table also contains `horizon_days` future dates per store and
+family (with empty `sales`); `src.train` forecasts those dates into
+`data/artifacts/forecast.parquet`. Transactions and oil prices are only used
+lagged by the horizon, since they are not known in advance. Kaggle's
+`test.csv` is optional: when present, its promotions are used for the
+forecast dates, otherwise future promotions are assumed to be zero.
 
 Launch the dashboard after installing the app extra:
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.metrics import bias, rmsse, wape
+from src.metrics import bias, mean_series_rmsse, wape
 from src.waste import compare_policies
 
 
@@ -15,21 +15,32 @@ def generate_report(
     feature_path: str | Path = "data/processed/features.parquet",
     output_dir: str | Path = "reports/generated",
     holdout_days: int = 42,
+    horizon: int = 14,
 ) -> dict[str, object]:
-    """Evaluate seasonal-naive and moving-average forecasts on the final holdout."""
+    """Evaluate seasonal-naive and moving-average forecasts on the final holdout.
+
+    Both baselines are computed on the full history and only use sales at
+    least ``horizon`` days old, matching what a direct ``horizon``-day
+    forecast could know. Forecast rows (null sales) are ignored.
+    """
+    keys = ["store_nbr", "family"]
     frame = pd.read_parquet(feature_path)
+    frame = frame[frame["sales"].notna()].copy()
     frame["date"] = pd.to_datetime(frame["date"])
-    frame = frame.sort_values(["store_nbr", "family", "date"])
+    frame = frame.sort_values([*keys, "date"])
+    grouped = frame.groupby(keys, observed=True)["sales"]
+    # The most recent same-weekday value that is at least `horizon` days old.
+    seasonal_lag = -(-horizon // 7) * 7
+    frame["seasonal_naive"] = grouped.shift(seasonal_lag)
+    frame["moving_average"] = grouped.transform(
+        lambda series: series.shift(horizon).rolling(14, min_periods=1).mean()
+    )
     cutoff = frame["date"].max() - pd.Timedelta(days=holdout_days - 1)
+    training = frame[frame["date"] < cutoff]
     holdout = frame[frame["date"] >= cutoff].copy()
-    holdout["seasonal_naive"] = holdout.groupby(["store_nbr", "family"], observed=True)[
-        "sales"
-    ].shift(7).fillna(0)
-    holdout["moving_average"] = holdout.groupby(["store_nbr", "family"], observed=True)[
-        "sales"
-    ].transform(lambda series: series.shift(7).rolling(14, min_periods=1).mean()).fillna(0)
     rows: list[dict[str, float | str]] = []
     for model in ("seasonal_naive", "moving_average"):
+        holdout[model] = holdout[model].fillna(0)
         actual = holdout["sales"].to_numpy()
         prediction = holdout[model].to_numpy()
         rows.append(
@@ -37,7 +48,7 @@ def generate_report(
                 "model": model,
                 "wape": wape(actual, prediction),
                 "bias": bias(actual, prediction),
-                "rmsse": rmsse(actual, prediction, frame["sales"].to_numpy()),
+                "rmsse": mean_series_rmsse(holdout, training, model, keys),
             }
         )
     representative = holdout.groupby("date", observed=True)["sales"].sum()
@@ -51,6 +62,7 @@ def generate_report(
     result: dict[str, object] = {
         "dataset": "Kaggle Store Sales - Time Series Forecasting",
         "holdout_days": holdout_days,
+        "horizon_days": horizon,
         "holdout_start": str(cutoff.date()),
         "holdout_end": str(frame["date"].max().date()),
         "metrics": rows,

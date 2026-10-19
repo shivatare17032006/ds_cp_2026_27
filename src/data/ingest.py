@@ -11,6 +11,8 @@ from src.config import PipelineConfig, load_config
 
 DATE_COLUMNS = {"date", "Date"}
 REQUIRED_TRAIN_COLUMNS = {"date", "store_nbr", "family", "sales", "onpromotion"}
+# Kaggle's test.csv holds future promotions; forecasting assumes none without it.
+OPTIONAL_TABLES = {"test"}
 
 
 def _resolve_raw_path(config: PipelineConfig, filename: str) -> Path:
@@ -52,6 +54,8 @@ def convert_raw_to_parquet(config: PipelineConfig) -> list[Path]:
     outputs: list[Path] = []
     for table, filename in config.dataset_files.items():
         source = _resolve_raw_path(config, filename)
+        if not source.exists() and table in OPTIONAL_TABLES:
+            continue
         if not source.exists():
             raise FileNotFoundError(
                 f"Missing configured {table} file: {source}. "
