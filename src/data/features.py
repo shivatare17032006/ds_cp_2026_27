@@ -128,15 +128,54 @@ def join_context(
             pl.col("oil_price").forward_fill()
         )
     if holidays is not None and "date" in holidays.collect_schema().names():
-        holiday_dates = holidays.select(pl.col("date").cast(pl.Date)).drop_nulls().unique().sort("date")
-        result = result.sort("date").join_asof(
-            holiday_dates.with_columns(pl.lit(0).alias("holiday_prev")),
-            on="date",
-            strategy="backward",
-        ).with_columns(
-            pl.col("holiday_prev").is_not_null().cast(pl.Int8).alias("holiday_flag")
-        ).drop("holiday_prev")
+        result = _join_holiday_flag(result, holidays)
     return result
+
+
+def _join_holiday_flag(features: pl.LazyFrame, holidays: pl.LazyFrame) -> pl.LazyFrame:
+    """Flag rows whose date is an observed holiday for that store's location.
+
+    Transferred holidays (celebrated on another date) and ``Work Day`` rows
+    (compensating working days) are excluded. National holidays apply to all
+    stores; Regional and Local ones match the store's ``state`` / ``city``
+    when those columns are present. Without a ``locale`` column every row is
+    treated as national.
+    """
+    holiday_schema = holidays.collect_schema()
+    holiday_columns = set(holiday_schema.names())
+    feature_columns = set(features.collect_schema().names())
+    observed = holidays.with_columns(pl.col("date").cast(pl.Date)).drop_nulls("date")
+    if "transferred" in holiday_columns:
+        transferred = (
+            pl.col("transferred").str.to_lowercase() == "true"
+            if holiday_schema["transferred"] == pl.String
+            else pl.col("transferred").cast(pl.Boolean)
+        )
+        observed = observed.filter(~transferred.fill_null(False))
+    if "type" in holiday_columns:
+        observed = observed.filter(pl.col("type") != "Work Day")
+    if "locale" not in holiday_columns:
+        observed = observed.with_columns(pl.lit("National").alias("locale"))
+
+    scopes = [("National", [], "_holiday_national")]
+    if "locale_name" in holiday_columns:
+        scopes += [("Regional", ["state"], "_holiday_regional"), ("Local", ["city"], "_holiday_local")]
+    result = features
+    flags: list[str] = []
+    for locale, keys, flag in scopes:
+        if not set(keys).issubset(feature_columns):
+            continue
+        matches = (
+            observed.filter(pl.col("locale") == locale)
+            .select([pl.col("date")] + [pl.col("locale_name").alias(key) for key in keys])
+            .unique()
+            .with_columns(pl.lit(1, dtype=pl.Int8).alias(flag))
+        )
+        result = result.join(matches, on=["date", *keys], how="left")
+        flags.append(flag)
+    return result.with_columns(
+        pl.max_horizontal([pl.col(f).fill_null(0) for f in flags]).cast(pl.Int8).alias("holiday_flag")
+    ).drop(flags)
 
 
 def build_features(train: pl.LazyFrame, horizon: int = 14) -> pl.LazyFrame:
