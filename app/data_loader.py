@@ -12,6 +12,8 @@ if str(ROOT) not in sys.path:
 import pandas as pd
 import streamlit as st
 
+from app.insights import compute_alerts
+
 FEATURE_PATH = ROOT / "data" / "processed" / "features.parquet"
 FORECAST_PATH = ROOT / "data" / "artifacts" / "forecast.parquet"
 STORES_PATH = ROOT / "data" / "interim" / "stores.parquet"
@@ -52,6 +54,13 @@ def load_all() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
         results = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
 
     return data, forecast_df, stores_df, results
+
+
+@st.cache_data(show_spinner=False)
+def load_alerts() -> pd.DataFrame:
+    """Per store/category risk table (see ``app.insights.compute_alerts``)."""
+    history, forecast, _, _ = load_all()
+    return compute_alerts(history, forecast)
 
 
 @st.cache_data(show_spinner=False)

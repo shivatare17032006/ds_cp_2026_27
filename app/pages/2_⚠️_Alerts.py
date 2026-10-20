@@ -12,69 +12,30 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from app.data_loader import load_all
+from app.data_loader import load_alerts, load_all
+from app.insights import HIGH_LABEL, HIGH_RISK, LOW_LABEL, MEDIUM_LABEL, MEDIUM_RISK
+from app.theme import PLOT_LAYOUT, apply_theme
 
 st.set_page_config(page_title="Alerts · FreshCast", page_icon="⚠️", layout="wide")
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-* { font-family: 'Inter', sans-serif; }
-.badge-red  { background:#7f1d1d; color:#fca5a5; padding:2px 10px; border-radius:99px; font-size:0.78rem; font-weight:600; }
-.badge-yel  { background:#78350f; color:#fde68a; padding:2px 10px; border-radius:99px; font-size:0.78rem; font-weight:600; }
-.badge-grn  { background:#14532d; color:#86efac; padding:2px 10px; border-radius:99px; font-size:0.78rem; font-weight:600; }
-.section-hd { font-size:1.1rem; font-weight:600; color:#e2e8f0; margin: 1.2rem 0 0.4rem; }
-</style>
-""", unsafe_allow_html=True)
+apply_theme(".section-hd { font-size:1.1rem; font-weight:600; color:#e2e8f0; margin: 1.2rem 0 0.4rem; }")
 
 data, forecast_df, stores_df, results = load_all()
 
 st.markdown("## ⚠️ Alerts & Anomaly Detection")
-st.caption("Auto-detected stockout risks, demand spikes, and anomalies across all stores and categories.")
+st.caption(
+    "Stockout risk = share of the last 28 days on which demand exceeded the next-day forecast, "
+    "i.e. the chance of running out if you order exactly the forecast. "
+    f"High above {HIGH_RISK:.0%}, medium above {MEDIUM_RISK:.0%}; sharp demand spikes and "
+    "frequent zero-sales days also raise the level."
+)
 
-# ── Compute per-entity risk metrics ──────────────────────────────────────────
-@st.cache_data(show_spinner=False)
-def compute_alerts(data: pd.DataFrame) -> pd.DataFrame:
-    records = []
-    for (store, family), grp in data.groupby(["store_nbr", "family"], observed=True):
-        grp = grp.sort_values("date")
-        sales = grp["sales"]
-        avg28 = sales.tail(28).mean()
-        avg7  = sales.tail(7).mean()
-        avg_prev7 = sales.tail(14).head(7).mean()
-        spike = (avg7 / max(avg_prev7, 0.1)) - 1  # relative spike
-        zero_rate = (sales.tail(28) == 0).mean()   # fraction of zero-demand days
+n_stores, n_categories = data["store_nbr"].nunique(), data["family"].nunique()
+with st.spinner(f"Scanning {n_stores} stores × {n_categories} categories…"):
+    alert_df = load_alerts()
 
-        if "forecast" in grp.columns:
-            forecast_val = grp["forecast"].iloc[-1]
-        else:
-            forecast_val = avg28
-
-        stockout_risk = max(0.0, 1.0 - forecast_val / max(avg28, 1.0))
-
-        if stockout_risk > 0.25 or spike > 0.5 or zero_rate > 0.6:
-            level = "🔴 High"
-        elif stockout_risk > 0.1 or abs(spike) > 0.25 or zero_rate > 0.35:
-            level = "🟡 Medium"
-        else:
-            level = "🟢 Low"
-
-        records.append({
-            "Store": store,
-            "Category": str(family),
-            "Risk Level": level,
-            "Stockout Risk": stockout_risk,
-            "Demand Spike": spike,
-            "Zero-Day Rate": zero_rate,
-            "Avg 28-Day Sales": avg28,
-        })
-    return pd.DataFrame(records).sort_values(["Risk Level", "Stockout Risk"], ascending=[True, False])
-
-with st.spinner("Scanning all 54 stores × 9 categories…"):
-    alert_df = compute_alerts(data)
-
-high   = alert_df[alert_df["Risk Level"] == "🔴 High"]
-medium = alert_df[alert_df["Risk Level"] == "🟡 Medium"]
-low    = alert_df[alert_df["Risk Level"] == "🟢 Low"]
+high   = alert_df[alert_df["Risk Level"] == HIGH_LABEL]
+medium = alert_df[alert_df["Risk Level"] == MEDIUM_LABEL]
+low    = alert_df[alert_df["Risk Level"] == LOW_LABEL]
 
 # ── Summary KPIs ──────────────────────────────────────────────────────────────
 c1, c2, c3, c4 = st.columns(4)
@@ -87,8 +48,8 @@ st.markdown("---")
 
 # ── Filter controls ───────────────────────────────────────────────────────────
 col1, col2 = st.columns(2)
-filter_level = col1.multiselect("Filter by Risk Level", ["🔴 High", "🟡 Medium", "🟢 Low"],
-                                 default=["🔴 High", "🟡 Medium"])
+filter_level = col1.multiselect("Filter by Risk Level", [HIGH_LABEL, MEDIUM_LABEL, LOW_LABEL],
+                                 default=[HIGH_LABEL, MEDIUM_LABEL])
 filter_cat   = col2.multiselect("Filter by Category", sorted(alert_df["Category"].unique()),
                                  default=[])
 
@@ -105,8 +66,9 @@ def fmt_num(v: float) -> str:
 st.dataframe(
     filtered.style
         .format({"Stockout Risk": fmt_pct, "Demand Spike": fmt_pct,
-                 "Zero-Day Rate": fmt_pct, "Avg 28-Day Sales": fmt_num})
-        .applymap(lambda v: "color:#fca5a5" if "High" in str(v) else
+                 "Zero-Day Rate": fmt_pct, "Avg 28-Day Sales": fmt_num,
+                 "Next-Day Forecast": fmt_num})
+        .map(lambda v: "color:#fca5a5" if "High" in str(v) else
                             ("color:#fde68a" if "Medium" in str(v) else "color:#86efac"),
                   subset=["Risk Level"]),
     width='stretch', hide_index=True,
@@ -120,12 +82,7 @@ fig = px.imshow(
     labels=dict(color="Stockout Risk"),
     aspect="auto", text_auto=".0%",
 )
-fig.update_layout(
-    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(15,20,40,0.6)",
-    margin=dict(l=0, r=0, t=20, b=0), height=420,
-    font=dict(family="Inter"),
-)
+fig.update_layout(**PLOT_LAYOUT, margin=dict(l=0, r=0, t=20, b=0), height=420)
 st.plotly_chart(fig, width='stretch')
 
 # ── Download ──────────────────────────────────────────────────────────────────

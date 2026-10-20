@@ -14,18 +14,16 @@ import plotly.express as px
 import streamlit as st
 
 from app.data_loader import load_all, load_holdout_metrics, load_waste_metrics
+from app.theme import apply_theme
 
 st.set_page_config(page_title="Model Comparison · FreshCast", page_icon="🏆", layout="wide")
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-* { font-family: 'Inter', sans-serif; }
+apply_theme("""
 .gold   { color:#fbbf24; font-weight:700; }
 .silver { color:#94a3b8; font-weight:700; }
 .leader-card { background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(139,92,246,0.1));
                border:1px solid rgba(99,102,241,0.3); border-radius:16px;
                padding:1.2rem 1.5rem; margin-bottom:0.8rem; }
-</style>""", unsafe_allow_html=True)
+""")
 
 data, forecast_df, stores_df, results = load_all()
 holdout = load_holdout_metrics()
@@ -96,11 +94,11 @@ if not waste.empty:
     st.markdown("---")
     st.markdown("### 🗑️ Waste Policy Rankings")
     best_cost = waste.loc[waste["cost"].idxmin(), "policy"]
-    st.markdown(f'<div class="leader-card">🥇 <span class="gold">Lowest Cost Policy: {best_cost.replace("_"," ").title()}</span> &nbsp;·&nbsp; Cost = €{waste["cost"].min():,.0f}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="leader-card">🥇 <span class="gold">Lowest Cost Policy: {best_cost.replace("_"," ").title()}</span> &nbsp;·&nbsp; Cost = {waste["cost"].min():,.0f}</div>', unsafe_allow_html=True)
 
     st.dataframe(
         waste.style.format({"waste_pct": "{:.1%}", "stockout_rate": "{:.1%}",
-                            "service_level": "{:.1%}", "cost": "€{:,.0f}"})
+                            "service_level": "{:.1%}", "cost": "{:,.0f}"})
              .highlight_min(subset=["cost", "stockout_rate"], color="#14532d44")
              .highlight_max(subset=["service_level"], color="#14532d44"),
         width='stretch', hide_index=True,
@@ -111,7 +109,7 @@ if not waste.empty:
         st.markdown("#### Policy Cost Comparison")
         fig4 = px.bar(waste, x="policy", y="cost", color="policy",
                       color_discrete_sequence=["#f87171","#fbbf24","#34d399"],
-                      labels={"cost":"Total Cost (€)","policy":"Policy"}, text_auto=",.0f")
+                      labels={"cost":"Total Cost (relative units)","policy":"Policy"}, text_auto=",.0f")
         fig4.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
                            plot_bgcolor="rgba(15,20,40,0.6)", showlegend=False,
                            height=280, margin=dict(l=0,r=0,t=20,b=0), font=dict(family="Inter"))

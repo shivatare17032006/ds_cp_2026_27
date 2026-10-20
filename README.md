@@ -58,6 +58,13 @@ The dashboard includes a demo view when no processed data exists, so the UI
 can be reviewed before downloading Kaggle files. Demo values are not model
 results.
 
+The AI Assistant page answers common questions offline. For free-form
+answers it calls Google Gemini: install the `ai` extra
+(`pip install -e ".[ai]"`) and enter a Gemini API key in the sidebar or set
+`GEMINI_API_KEY`. Stockout risk on the dashboard is the share of the last 28
+days on which demand exceeded the next-day forecast; simulated costs are in
+relative units, not a currency.
+
 Generate the final holdout and simulated waste-policy report:
 
 ```powershell

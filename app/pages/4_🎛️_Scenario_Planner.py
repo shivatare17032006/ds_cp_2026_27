@@ -13,19 +13,17 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.data_loader import load_all
+from app.theme import apply_theme
 from src.waste import compare_policies, simulate_fifo, WastePolicy, critical_ratio
 
 st.set_page_config(page_title="Scenario Planner · FreshCast", page_icon="🎛️", layout="wide")
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-* { font-family: 'Inter', sans-serif; }
+apply_theme("""
 .kpi-box { background:rgba(99,102,241,0.12); border:1px solid rgba(99,102,241,0.3);
            border-radius:12px; padding:1rem; text-align:center; }
 .kpi-val { font-size:1.8rem; font-weight:700; color:#a5b4fc; }
 .kpi-lbl { font-size:0.75rem; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; }
 .vs-arrow { font-size:2rem; display:flex; align-items:center; justify-content:center; color:#6366f1; }
-</style>""", unsafe_allow_html=True)
+""")
 
 data, forecast_df, stores_df, results = load_all()
 
@@ -56,9 +54,9 @@ col_a, col_mid, col_b = st.columns([5, 1, 5])
 with col_a:
     st.markdown("**📦 Scenario A (Baseline)**")
     shelf_a      = st.slider("Shelf life (days)", 1, 30, 7,  key="sh_a")
-    safety_a     = st.slider("Safety stock (%)",  0, 50, 10, key="ss_a") / 100
-    lost_margin_a = st.slider("Lost margin (€/unit)", 0.1, 5.0, 1.0, step=0.1, key="lm_a")
-    waste_cost_a  = st.slider("Waste cost (€/unit)",  0.0, 3.0, 0.3, step=0.1, key="wc_a")
+    safety_a     = st.slider("Safety stock (%)",  0, 50, 10, key="ss_a", help="Ignored by newsvendor, which sizes its buffer from the lost-margin / waste-cost ratio.") / 100
+    lost_margin_a = st.slider("Lost margin (per unit)", 0.1, 5.0, 1.0, step=0.1, key="lm_a")
+    waste_cost_a  = st.slider("Waste cost (per unit)",  0.0, 3.0, 0.3, step=0.1, key="wc_a")
     policy_a_name = st.selectbox("Policy", ["moving_average", "median", "newsvendor"], key="pol_a")
 
 with col_mid:
@@ -67,9 +65,9 @@ with col_mid:
 with col_b:
     st.markdown("**🚀 Scenario B (Improved)**")
     shelf_b      = st.slider("Shelf life (days)", 1, 30, 7,  key="sh_b")
-    safety_b     = st.slider("Safety stock (%)",  0, 50, 5,  key="ss_b") / 100
-    lost_margin_b = st.slider("Lost margin (€/unit)", 0.1, 5.0, 1.0, step=0.1, key="lm_b")
-    waste_cost_b  = st.slider("Waste cost (€/unit)",  0.0, 3.0, 0.5, step=0.1, key="wc_b")
+    safety_b     = st.slider("Safety stock (%)",  0, 50, 5,  key="ss_b", help="Ignored by newsvendor, which sizes its buffer from the lost-margin / waste-cost ratio.") / 100
+    lost_margin_b = st.slider("Lost margin (per unit)", 0.1, 5.0, 1.0, step=0.1, key="lm_b")
+    waste_cost_b  = st.slider("Waste cost (per unit)",  0.0, 3.0, 0.5, step=0.1, key="wc_b")
     policy_b_name = st.selectbox("Policy", ["newsvendor", "moving_average", "median"], key="pol_b")
 
 
@@ -104,7 +102,7 @@ def summarise(res):
 sa, sb = summarise(res_a), summarise(res_b)
 
 kpi_cols = st.columns(4)
-labels = ["Waste %", "Stockout Rate", "Service Level", "Total Cost (€)"]
+labels = ["Waste %", "Stockout Rate", "Service Level", "Total Cost (relative units)"]
 keys   = ["waste_pct", "stockout_rate", "service_level", "cost"]
 fmt    = ["{:.1%}", "{:.1%}", "{:.1%}", "{:,.0f}"]
 

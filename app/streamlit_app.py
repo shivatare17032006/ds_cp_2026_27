@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 import sys
-import subprocess
-import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 from app.data_loader import load_all, load_holdout_metrics, load_waste_metrics
+from app.insights import run_pipeline
+from app.theme import PLOT_LAYOUT, apply_theme
 
 st.set_page_config(
     page_title="FreshCast Control Tower",
@@ -23,11 +22,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-* { font-family: 'Inter', sans-serif; }
-
+apply_theme("""
 /* Hero */
 .hero {
     background: linear-gradient(135deg, #0b3d2e 0%, #0f5a42 40%, #1a7a5e 100%);
@@ -67,8 +62,7 @@ section[data-testid="stSidebar"] { background: #0a0f1e; }
     transition: all 0.2s ease;
 }
 .stButton > button:hover { opacity:0.9; transform:translateY(-1px); }
-</style>
-""", unsafe_allow_html=True)
+""")
 
 data, forecast_df, stores_df, results = load_all()
 holdout = load_holdout_metrics()
@@ -96,7 +90,7 @@ c1, c2, c3, c4 = st.columns(4)
 c1.markdown(f"""<div class="kpi" style="--accent:#4ade80">
   <div class="kpi-val">{total_stores}</div>
   <div class="kpi-lbl">Stores Monitored</div>
-  <div class="kpi-sub">Ecuador · Favorita</div>
+  <div class="kpi-sub">Ecuador · Kaggle Store Sales</div>
 </div>""", unsafe_allow_html=True)
 
 c2.markdown(f"""<div class="kpi" style="--accent:#818cf8">
@@ -116,7 +110,7 @@ c3.markdown(f"""<div class="kpi" style="--accent:#f59e0b">
 </div>""", unsafe_allow_html=True)
 
 c4.markdown(f"""<div class="kpi" style="--accent:#34d399">
-  <div class="kpi-val">{total_records/1e6:.2f}M</div>
+  <div class="kpi-val">{f"{total_records/1e6:.2f}M" if total_records >= 1e6 else f"{total_records:,}"}</div>
   <div class="kpi-lbl">Data Records</div>
   <div class="kpi-sub">{date_range}</div>
 </div>""", unsafe_allow_html=True)
@@ -133,10 +127,8 @@ with col1:
     fig = px.line(daily, x="date", y=["sales", "ma_14"],
                   color_discrete_map={"sales": "rgba(74,222,128,0.4)", "ma_14": "#4ade80"},
                   labels={"value":"Units","date":"Date","variable":"Series"})
-    fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                      plot_bgcolor="rgba(15,20,40,0.6)", height=300,
-                      margin=dict(l=0,r=0,t=20,b=0), legend=dict(orientation="h",y=1.05),
-                      font=dict(family="Inter"))
+    fig.update_layout(**PLOT_LAYOUT, height=300,
+                      margin=dict(l=0,r=0,t=20,b=0), legend=dict(orientation="h",y=1.05))
     st.plotly_chart(fig, width='stretch')
 
 with col2:
@@ -144,9 +136,8 @@ with col2:
     cat_sales = data.groupby("family")["sales"].sum().sort_values(ascending=False).reset_index()
     fig2 = px.pie(cat_sales, names="family", values="sales",
                   color_discrete_sequence=px.colors.qualitative.Vivid, hole=0.4)
-    fig2.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                       height=300, margin=dict(l=0,r=0,t=20,b=0),
-                       font=dict(family="Inter"), legend=dict(orientation="h", y=-0.2))
+    fig2.update_layout(**PLOT_LAYOUT, height=300, margin=dict(l=0,r=0,t=20,b=0),
+                       legend=dict(orientation="h", y=-0.2))
     st.plotly_chart(fig2, width='stretch')
 
 # ── Results summary ───────────────────────────────────────────────────────────
@@ -166,59 +157,38 @@ if results:
         if not waste.empty:
             st.dataframe(
                 waste.style.format({"waste_pct":"{:.1%}","stockout_rate":"{:.1%}",
-                                    "service_level":"{:.1%}","cost":"€{:,.0f}"}),
+                                    "service_level":"{:.1%}","cost":"{:,.0f}"}),
                 width='stretch', hide_index=True)
+            st.caption("Cost is in relative units: lost margin per unit short plus waste cost per unit expired.")
 
 # ── Live retraining ────────────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("### 🔁 Retrain Pipeline")
 st.caption("Regenerate features, retrain model, and refresh the report in one click.")
 
-if "retrain_log" not in st.session_state:
-    st.session_state.retrain_log = ""
-if "retrain_running" not in st.session_state:
-    st.session_state.retrain_running = False
-
-if st.button("🚀 Run Full Pipeline (pipeline → train → report)", disabled=st.session_state.retrain_running):
-    st.session_state.retrain_running = True
-    st.session_state.retrain_log = "⏳ Starting pipeline…\n"
-
-    def _retrain():
-        log = ""
-        for step, cmd in [
-            ("pipeline", [sys.executable, "-m", "src.pipeline", "--config", "configs/base.yaml"]),
-            ("train",    [sys.executable, "-m", "src.train"]),
-            ("report",   [sys.executable, "-m", "src.report"]),
-        ]:
-            log += f"\n▶️ Running {step}…\n"
-            try:
-                r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
-                log += r.stdout or ""
-                if r.returncode != 0:
-                    log += f"❌ {step} failed:\n{r.stderr}"
-                    break
-                else:
-                    log += f"✅ {step} done.\n"
-            except Exception as e:
-                log += f"❌ Error: {e}\n"
+if st.button("🚀 Run Full Pipeline (pipeline → train → report)"):
+    # Runs in the script thread: a background thread cannot update
+    # st.session_state, which left the button disabled forever.
+    log: list[str] = []
+    succeeded = True
+    with st.status("Running pipeline…", expanded=True) as status:
+        for step, ok, output in run_pipeline(ROOT):
+            st.write(f"{'✅' if ok else '❌'} {step}")
+            log.append(f"▶️ {step}\n{output.strip()}\n{'✅ done' if ok else '❌ failed'}\n")
+            if not ok:
+                succeeded = False
+                status.update(label=f"Pipeline failed at '{step}'", state="error")
                 break
-        log += "\n🎉 Pipeline complete! Refresh the page to see updated results."
-        st.session_state.retrain_log = log
-        st.session_state.retrain_running = False
+        if succeeded:
+            status.update(label="Pipeline complete — data refreshed", state="complete")
+    st.session_state.retrain_log = "\n".join(log)
+    if succeeded:
+        st.cache_data.clear()
+        st.rerun()
 
-    t = threading.Thread(target=_retrain, daemon=True)
-    t.start()
-    st.rerun()
-
-if st.session_state.retrain_running:
-    st.spinner("Running pipeline…")
-
-if st.session_state.retrain_log:
-    st.code(st.session_state.retrain_log, language="bash")
-    if not st.session_state.retrain_running:
-        if st.button("🔄 Refresh Data"):
-            st.cache_data.clear()
-            st.rerun()
+if st.session_state.get("retrain_log"):
+    with st.expander("Last pipeline run log"):
+        st.code(st.session_state.retrain_log, language="bash")
 
 st.markdown("---")
 st.caption("FreshCast · Predictive Supply Chain & Food Waste Reduction · Kaggle Store Sales Dataset")
