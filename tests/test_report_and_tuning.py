@@ -1,11 +1,9 @@
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
 
+from src.backtest import backtest, summarize
 from src.metrics import mean_series_rmsse
-from src.report import generate_report
 
 
 def _weekly_frame(days: int = 120, future_days: int = 14) -> pd.DataFrame:
@@ -29,16 +27,15 @@ def test_mean_series_rmsse_scales_each_series_by_its_own_history() -> None:
     assert mean_series_rmsse(holdout, training, "pred", ["id"]) == pytest.approx(expected)
 
 
-def test_report_baselines_use_full_history_and_ignore_forecast_rows(tmp_path: Path) -> None:
-    feature_path = tmp_path / "features.parquet"
-    _weekly_frame().to_parquet(feature_path)
-    result = generate_report(feature_path, tmp_path / "out", holdout_days=28, horizon=14)
-    metrics = {row["model"]: row for row in result["metrics"]}
+def test_backtest_baselines_use_full_history_and_ignore_forecast_rows() -> None:
+    frame = _weekly_frame().assign(target=lambda f: np.log1p(f["sales"]))
+    predictions = backtest(frame, horizon=14, folds=2, models=())
+    overall, _, _ = summarize(predictions, frame, ["seasonal_naive", "moving_average"])
     # Sales repeat weekly, so a 14-day seasonal naive is exact from the first
-    # holdout day; computing it inside the holdout would zero-fill the start.
-    assert metrics["seasonal_naive"]["wape"] == pytest.approx(0.0)
-    assert result["holdout_end"] == "2024-04-29"
-    assert (tmp_path / "out" / "results.json").exists()
+    # window day; computing it inside the window would zero-fill the start.
+    assert overall.set_index("model").loc["seasonal_naive", "wape"] == pytest.approx(0.0)
+    assert predictions["date"].max() == pd.Timestamp("2024-04-29")  # forecast rows ignored
+    assert predictions["date"].nunique() == 28
 
 
 def test_time_split_separates_dates() -> None:

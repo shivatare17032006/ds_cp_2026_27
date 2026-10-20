@@ -65,15 +65,33 @@ answers it calls Google Gemini: install the `ai` extra
 days on which demand exceeded the next-day forecast; simulated costs are in
 relative units, not a currency.
 
-Generate the final holdout and simulated waste-policy report:
+Generate the backtest and simulated waste-policy report:
 
 ```powershell
-python -m src.report
+python -m src.report --config configs\base.yaml
 ```
 
-Results are written to `reports/generated/holdout_metrics.csv`,
-`reports/generated/waste_policy_metrics.csv`, and
-`reports/generated/results.json`.
+The report runs a rolling-origin backtest: `evaluation.folds` consecutive
+windows of `horizon_days` at the end of the history (3 × 14 = the last 42
+days by default). In each window the baselines (seasonal naive, 14-day
+moving average) and the configured ML models (`evaluation.models`) forecast
+using only data available before the window starts. Days before a store first
+sold a category, and days a whole store sold nothing (closures), are excluded
+from training and scoring.
+
+Waste is then simulated for every store and category separately, with the
+category's shelf life from `assumptions.shelf_life_days`, for three ordering
+policies (forecast + 10%, forecast only, cost-optimal newsvendor). The
+headline in `results.json` compares the best model's forecasts with the
+moving-average forecasts under newsvendor ordering. Orders arrive the same
+day in this simulation, which keeps simulated waste very low; the headline
+says so when waste is too small to compare.
+
+Outputs in `reports/generated/`: `holdout_metrics.csv` (one row per model),
+`backtest_metrics.csv` (per window), `family_metrics.csv` (WAPE per
+category), `waste_comparison.csv` (every forecast × policy),
+`waste_policy_metrics.csv` (policies for the best forecast) and
+`results.json`.
 
 ## Repository layout
 

@@ -2,9 +2,11 @@
 
 Review of `shivatare17032006/ds_cp_2026_27` at commit `6fb86b7` (single commit, ~1,000 LOC).
 
-**Progress:** Phase 1 and Phase 2 are done (P0 #1–11, plus the pytest path from #12).
-Still open from P0 #12: the packaging/entry-point layout. The dashboard's
-`No module named 'src'` crash was fixed along the way.
+**Progress:** Phases 1–3 are done (P0 #1–11, the pytest path from #12, and
+P1 #1, #4, #5, #6, #8). Still open from P0 #12: the packaging/entry-point
+layout. The dashboard's `No module named 'src'` crash was fixed along the way.
+Next up is Phase 4; delivery lead time (P1 #9) matters most, because with
+same-day delivery the simulated waste is close to zero for every forecast.
 
 ## Summary
 

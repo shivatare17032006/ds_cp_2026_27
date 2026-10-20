@@ -67,7 +67,7 @@ def _make_estimator(model_name: str, seed: int) -> Any:
     raise ValueError(f"Unsupported model: {model_name}")
 
 
-NON_FEATURE_COLUMNS = {"date", "sales", "target", "store_id"}
+NON_FEATURE_COLUMNS = {"date", "sales", "target", "store_id", "is_open"}
 WARMUP_PREFIXES = ("sales_", "zero_rate_")
 
 
@@ -94,14 +94,37 @@ def split_history_future(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split into trainable history and the forecast rows (null target).
 
-    History rows are dropped only while demand lags are still warming up;
-    other missing context values (e.g. store-days without transactions) are
-    left for the tree model to handle.
+    History rows are dropped while demand lags are still warming up and on
+    days marked closed / not yet stocked (``is_open == 0``); other missing
+    context values (e.g. store-days without transactions) are left for the
+    tree model to handle.
     """
+    return trainable_rows(frame, feature_columns), frame[frame["target"].isna()]
+
+
+def trainable_rows(frame: pd.DataFrame, feature_columns: list[str]) -> pd.DataFrame:
+    """Rows with an observed target, warm lags, and an open store."""
     warmup = [c for c in feature_columns if c.startswith(WARMUP_PREFIXES)]
-    history = frame[frame["target"].notna()].dropna(subset=warmup)
-    future = frame[frame["target"].isna()]
-    return history, future
+    rows = frame[frame["target"].notna()]
+    if "is_open" in rows.columns:
+        rows = rows[rows["is_open"] == 1]
+    return rows.dropna(subset=warmup)
+
+
+def fit_model(
+    train: pd.DataFrame, feature_columns: list[str], model_name: str = "lightgbm", seed: int = 42
+) -> Any:
+    """Fit a global regressor on log1p demand."""
+    if train.empty:
+        raise ValueError("No rows remain after removing unavailable lag features.")
+    estimator = _make_estimator(model_name, seed)
+    estimator.fit(train[feature_columns], train["target"])
+    return estimator
+
+
+def predict_demand(estimator: Any, rows: pd.DataFrame, feature_columns: list[str]) -> np.ndarray:
+    """Predict demand in units (inverse of the log1p target, clipped at zero)."""
+    return np.expm1(estimator.predict(rows[feature_columns])).clip(0)
 
 
 def train_global_model(
@@ -119,16 +142,14 @@ def train_global_model(
     frame, feature_columns = prepare_features(features)
     frame["date"] = pd.to_datetime(frame["date"])
     history, future = split_history_future(frame, feature_columns)
-    if history.empty:
-        raise ValueError("No rows remain after removing unavailable lag features.")
     if future.empty:
         raise ValueError("No forecast rows found; build features with forecast_rows=True.")
-    estimator = _make_estimator(model_name, seed)
-    estimator.fit(history[feature_columns], history["target"])
+    estimator = fit_model(history, feature_columns, model_name, seed)
+    last_observed = frame.loc[frame["target"].notna(), "date"].max()
     forecast = future[["store_nbr", "family", "date"]].copy()
     forecast["family"] = forecast["family"].astype(str)
-    forecast["horizon_day"] = (forecast["date"] - history["date"].max()).dt.days
-    forecast["forecast"] = np.expm1(estimator.predict(future[feature_columns])).clip(0)
+    forecast["horizon_day"] = (forecast["date"] - last_observed).dt.days
+    forecast["forecast"] = predict_demand(estimator, future, feature_columns)
     forecast = forecast[forecast["horizon_day"].between(1, horizon)]
     return estimator, forecast.reset_index(drop=True), feature_columns
 

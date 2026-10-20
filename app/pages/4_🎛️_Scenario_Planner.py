@@ -57,7 +57,7 @@ with col_a:
     safety_a     = st.slider("Safety stock (%)",  0, 50, 10, key="ss_a", help="Ignored by newsvendor, which sizes its buffer from the lost-margin / waste-cost ratio.") / 100
     lost_margin_a = st.slider("Lost margin (per unit)", 0.1, 5.0, 1.0, step=0.1, key="lm_a")
     waste_cost_a  = st.slider("Waste cost (per unit)",  0.0, 3.0, 0.3, step=0.1, key="wc_a")
-    policy_a_name = st.selectbox("Policy", ["moving_average", "median", "newsvendor"], key="pol_a")
+    policy_a_name = st.selectbox("Policy", ["forecast_plus_10pct", "forecast_only", "newsvendor"], key="pol_a")
 
 with col_mid:
     st.markdown('<div class="vs-arrow">VS</div>', unsafe_allow_html=True)
@@ -68,7 +68,7 @@ with col_b:
     safety_b     = st.slider("Safety stock (%)",  0, 50, 5,  key="ss_b", help="Ignored by newsvendor, which sizes its buffer from the lost-margin / waste-cost ratio.") / 100
     lost_margin_b = st.slider("Lost margin (per unit)", 0.1, 5.0, 1.0, step=0.1, key="lm_b")
     waste_cost_b  = st.slider("Waste cost (per unit)",  0.0, 3.0, 0.5, step=0.1, key="wc_b")
-    policy_b_name = st.selectbox("Policy", ["newsvendor", "moving_average", "median"], key="pol_b")
+    policy_b_name = st.selectbox("Policy", ["newsvendor", "forecast_plus_10pct", "forecast_only"], key="pol_b")
 
 
 def run_scenario(demand, forecast, shelf, safety, lost_m, waste_c, pol_name):

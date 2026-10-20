@@ -27,7 +27,7 @@ def test_unsold_batch_expires_on_shelf_life_day() -> None:
     assert result["on_hand"].tolist() == [4.0, 4.0, 4.0, 0.0]
 
 
-@pytest.mark.parametrize("policy", ["median", "moving_average", "newsvendor"])
+@pytest.mark.parametrize("policy", ["forecast_only", "forecast_plus_10pct", "newsvendor"])
 def test_inventory_is_conserved(policy: str) -> None:
     rng = np.random.default_rng(0)
     demand = _series(rng.poisson(8, 60).tolist())
@@ -48,7 +48,7 @@ def test_high_quantile_newsvendor_reduces_stockouts_vs_median() -> None:
     rng = np.random.default_rng(1)
     demand = _series(rng.poisson(10, 90).tolist())
     forecast = _series([10.0] * 90)
-    median = simulate_fifo(demand, forecast, 3, WastePolicy("median"))
+    median = simulate_fifo(demand, forecast, 3, WastePolicy("forecast_only"))
     newsvendor = simulate_fifo(demand, forecast, 3, WastePolicy("newsvendor", 0.9))
     assert newsvendor["stockout"].sum() < median["stockout"].sum()
     assert newsvendor["order"].sum() >= median["order"].sum()
@@ -68,7 +68,7 @@ def test_compare_policies_uses_cost_based_quantile() -> None:
     demand = _series(rng.poisson(10, 60).tolist())
     forecast = _series([10.0] * 60)
     table = compare_policies(demand, forecast, shelf_life_days=3).set_index("policy")
-    assert table.loc["newsvendor", "service_level"] > table.loc["median", "service_level"]
+    assert table.loc["newsvendor", "service_level"] > table.loc["forecast_only", "service_level"]
 
 
 def test_invalid_quantile_rejected() -> None:

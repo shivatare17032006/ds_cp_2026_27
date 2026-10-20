@@ -1,78 +1,127 @@
-"""Generate final holdout metrics and waste-policy results from processed data."""
+"""Generate backtest metrics and waste-policy results from processed data."""
 
 from __future__ import annotations
 
+import argparse
+import importlib.util
 import json
 from pathlib import Path
 
 import pandas as pd
 
-from src.metrics import bias, mean_series_rmsse, wape
-from src.waste import compare_policies
+from src.backtest import BASELINES, backtest, summarize
+from src.config import PipelineConfig, load_config
+from src.waste import simulate_portfolio
+
+HEADLINE_POLICY = "newsvendor"
+NEGLIGIBLE_WASTE_PCT = 0.005
 
 
-def generate_report(
-    feature_path: str | Path = "data/processed/features.parquet",
-    output_dir: str | Path = "reports/generated",
-    holdout_days: int = 42,
-    horizon: int = 14,
-) -> dict[str, object]:
-    """Evaluate seasonal-naive and moving-average forecasts on the final holdout.
+def available_models(models: list[str]) -> list[str]:
+    """Configured ML models whose libraries are installed."""
+    return [m for m in models if importlib.util.find_spec(m) is not None]
 
-    Both baselines are computed on the full history and only use sales at
-    least ``horizon`` days old, matching what a direct ``horizon``-day
-    forecast could know. Forecast rows (null sales) are ignored.
-    """
-    keys = ["store_nbr", "family"]
-    frame = pd.read_parquet(feature_path)
-    frame = frame[frame["sales"].notna()].copy()
-    frame["date"] = pd.to_datetime(frame["date"])
-    frame = frame.sort_values([*keys, "date"])
-    grouped = frame.groupby(keys, observed=True)["sales"]
-    # The most recent same-weekday value that is at least `horizon` days old.
-    seasonal_lag = -(-horizon // 7) * 7
-    frame["seasonal_naive"] = grouped.shift(seasonal_lag)
-    frame["moving_average"] = grouped.transform(
-        lambda series: series.shift(horizon).rolling(14, min_periods=1).mean()
-    )
-    cutoff = frame["date"].max() - pd.Timedelta(days=holdout_days - 1)
-    training = frame[frame["date"] < cutoff]
-    holdout = frame[frame["date"] >= cutoff].copy()
-    rows: list[dict[str, float | str]] = []
-    for model in ("seasonal_naive", "moving_average"):
-        holdout[model] = holdout[model].fillna(0)
-        actual = holdout["sales"].to_numpy()
-        prediction = holdout[model].to_numpy()
-        rows.append(
-            {
-                "model": model,
-                "wape": wape(actual, prediction),
-                "bias": bias(actual, prediction),
-                "rmsse": mean_series_rmsse(holdout, training, model, keys),
-            }
+
+def headline(waste: pd.DataFrame, model: str, baseline: str = "moving_average") -> dict[str, object]:
+    """Compare model-driven and baseline-driven ordering under the same policy."""
+    rows = waste[waste["policy"] == HEADLINE_POLICY].set_index("forecast")
+    if model == baseline or model not in rows.index:
+        return {"available": False, "reason": "No ML model was evaluated."}
+    ours, base = rows.loc[model], rows.loc[baseline]
+    negligible = base["waste_pct"] < NEGLIGIBLE_WASTE_PCT
+    result: dict[str, object] = {
+        "available": True,
+        "policy": HEADLINE_POLICY,
+        "forecast": model,
+        "baseline_forecast": baseline,
+        "units_wasted": float(ours["units_wasted"]),
+        "baseline_units_wasted": float(base["units_wasted"]),
+        "waste_pct": float(ours["waste_pct"]),
+        "baseline_waste_pct": float(base["waste_pct"]),
+        # A relative change between two near-zero amounts is noise, not a result.
+        "waste_reduction_pct": None if negligible else float(1 - ours["units_wasted"] / base["units_wasted"]),
+        "service_level": float(ours["service_level"]),
+        "baseline_service_level": float(base["service_level"]),
+        "cost": float(ours["cost"]),
+        "baseline_cost": float(base["cost"]),
+        "cost_reduction_pct": float(1 - ours["cost"] / base["cost"]) if base["cost"] else None,
+    }
+    if negligible:
+        result["note"] = (
+            f"Simulated waste is below {NEGLIGIBLE_WASTE_PCT:.1%} of units ordered for both "
+            "forecasts: with daily ordering and same-day delivery, leftovers sell before they "
+            "expire. Compare cost and service level instead."
         )
-    representative = holdout.groupby("date", observed=True)["sales"].sum()
-    representative_forecast = holdout.groupby("date", observed=True)["moving_average"].sum()
-    policies = compare_policies(representative, representative_forecast, shelf_life_days=7)
-    output = Path(output_dir)
+    return result
+
+
+def generate_report(config: PipelineConfig) -> dict[str, object]:
+    """Backtest baselines and ML models, simulate waste per store/family, write results.
+
+    Outputs in ``config.reports_dir``: ``holdout_metrics.csv`` (overall,
+    one row per model), ``backtest_metrics.csv`` (per fold),
+    ``family_metrics.csv`` (WAPE per family), ``waste_comparison.csv``
+    (every forecast x policy), ``waste_policy_metrics.csv`` (policies for
+    the best forecast) and ``results.json``.
+    """
+    features = pd.read_parquet(config.processed_dir / "features.parquet")
+    models = available_models(config.models)
+    predictions = backtest(features, config.horizon, config.backtest_folds, models, config.seed)
+    evaluated = [*BASELINES, *models]
+    overall, per_fold, by_family = summarize(predictions, features, evaluated)
+
+    best_model = min(models, key=lambda m: float(overall.set_index("model").loc[m, "wape"])) if models else None
+    forecasts = ["moving_average", *([best_model] if best_model else [])]
+    waste = pd.concat(
+        [
+            simulate_portfolio(
+                predictions, forecast, config.shelf_life, config.lost_margin, config.waste_cost
+            ).assign(forecast=forecast)
+            for forecast in forecasts
+        ],
+        ignore_index=True,
+    )
+    best_forecast = best_model or "moving_average"
+    policies = waste[waste["forecast"] == best_forecast].drop(columns="forecast")
+
+    output = config.reports_dir
     output.mkdir(parents=True, exist_ok=True)
-    metrics = pd.DataFrame(rows)
-    metrics.to_csv(output / "holdout_metrics.csv", index=False)
+    overall.to_csv(output / "holdout_metrics.csv", index=False)
+    per_fold.to_csv(output / "backtest_metrics.csv", index=False)
+    by_family.to_csv(output / "family_metrics.csv", index=False)
+    waste.to_csv(output / "waste_comparison.csv", index=False)
     policies.to_csv(output / "waste_policy_metrics.csv", index=False)
+    skipped = sorted(set(config.models) - set(models))
     result: dict[str, object] = {
         "dataset": "Kaggle Store Sales - Time Series Forecasting",
-        "holdout_days": holdout_days,
-        "horizon_days": horizon,
-        "holdout_start": str(cutoff.date()),
-        "holdout_end": str(frame["date"].max().date()),
-        "metrics": rows,
+        "horizon_days": config.horizon,
+        "folds": config.backtest_folds,
+        "holdout_days": config.horizon * config.backtest_folds,
+        "holdout_start": str(predictions["date"].min().date()),
+        "holdout_end": str(predictions["date"].max().date()),
+        "families": sorted(predictions["family"].unique().tolist()),
+        "shelf_life_days": {f: config.shelf_life(f) for f in sorted(predictions["family"].unique())},
+        "metrics": overall.to_dict(orient="records"),
+        "best_model": best_model,
+        "skipped_models": skipped,
+        "waste_forecast": best_forecast,
         "waste_policies": policies.to_dict(orient="records"),
-        "caveat": "Waste is simulated from sales and assumptions; it is not observed waste.",
+        "headline": headline(waste, best_forecast),
+        "caveat": (
+            "Waste is simulated per store and family from sales, forecasts and the configured "
+            "shelf lives and costs; it is not observed waste. Costs are in relative units."
+        ),
     }
     (output / "results.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default="configs/base.yaml")
+    args = parser.parse_args()
+    print(json.dumps(generate_report(load_config(args.config)), indent=2))
+
+
 if __name__ == "__main__":
-    report = generate_report()
-    print(json.dumps(report, indent=2))
+    main()

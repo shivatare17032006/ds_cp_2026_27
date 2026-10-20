@@ -57,7 +57,7 @@ with st.sidebar:
         "What is the best waste policy and why?",
         "Which product category has the most stockout risk?",
         "Summarize the holdout forecast accuracy.",
-        "How does newsvendor policy compare to moving average?",
+        "How does newsvendor ordering compare to ordering the forecast?",
         "What is WAPE and which model scored best?",
     ]
     for s in suggestions:

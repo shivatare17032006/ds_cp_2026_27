@@ -43,5 +43,5 @@ def test_fifo_simulation_has_service_and_waste_columns() -> None:
     index = pd.date_range("2024-01-01", periods=5)
     demand = pd.Series([5, 5, 5, 5, 5], index=index)
     forecast = pd.Series([5, 5, 5, 5, 5], index=index)
-    result = simulate_fifo(demand, forecast, shelf_life_days=3, policy=WastePolicy("median"))
+    result = simulate_fifo(demand, forecast, shelf_life_days=3, policy=WastePolicy("forecast_only"))
     assert {"waste", "stockout", "service_level"}.issubset(result.columns)

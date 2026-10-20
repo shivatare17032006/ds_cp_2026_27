@@ -72,7 +72,7 @@ def _answer(question: str) -> str:
          "bias": [0.0, 0.01], "rmsse": [1.0, 0.9]}
     )
     waste = pd.DataFrame(
-        {"policy": ["median", "newsvendor"], "waste_pct": [0.1, 0.05],
+        {"policy": ["forecast_only", "newsvendor"], "waste_pct": [0.1, 0.05],
          "stockout_rate": [0.3, 0.1], "service_level": [0.9, 0.97], "cost": [500.0, 200.0]}
     )
     stores = pd.DataFrame({"store_nbr": [1, 2, 3], "city": ["Quito", "Quito", "Cuenca"]})
@@ -87,7 +87,7 @@ def _answer(question: str) -> str:
         ("What is the best waste policy and why?", "Lowest-cost policy: Newsvendor"),
         ("Which product category has the most stockout risk?", "by category"),
         ("Summarize the holdout forecast accuracy.", "Best model: Moving Average"),
-        ("How does newsvendor policy compare to moving average?", "Lowest-cost policy"),
+        ("How does newsvendor ordering compare to ordering the forecast?", "Lowest-cost policy"),
         ("What is WAPE and which model scored best?", "Best model: Moving Average"),
         ("How many stores are there?", "3 stores** across **2 cities"),
         ("hello", "Hello!"),

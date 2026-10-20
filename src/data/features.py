@@ -40,6 +40,22 @@ def build_complete_grid(train: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
+def mark_open_days(grid: pl.LazyFrame) -> pl.LazyFrame:
+    """Add ``is_open`` (Int8): 0 where a zero is an artefact of the dense grid.
+
+    That is days before a store/family's first sale (not yet stocked) and
+    days on which the whole store sold nothing (closures, e.g. Dec 25, which
+    is absent from the raw data). These rows keep ``sales = 0`` so lag
+    windows stay contiguous, but they are excluded from training targets,
+    evaluation and the waste simulation.
+    """
+    first_sale = pl.col("date").filter(pl.col("sales") > 0).min().over(["store_nbr", "family"])
+    store_sales = pl.col("sales").sum().over(["store_nbr", "date"])
+    return grid.with_columns(
+        ((pl.col("date") >= first_sale) & (store_sales > 0)).fill_null(False).cast(pl.Int8).alias("is_open")
+    )
+
+
 def add_features(grid: pl.LazyFrame, horizon: int = 14) -> pl.LazyFrame:
     """Add calendar, lagged, rolling and exponentially weighted demand features.
 
@@ -226,6 +242,9 @@ def append_future(
     else:
         rows = rows.with_columns(pl.lit(None, dtype=pl.Int32).alias("onpromotion"))
     rows = rows.with_columns(pl.col("onpromotion").fill_null(0))
+    if "is_open" in schema:
+        # Future store closures are unknown; assume open.
+        rows = rows.with_columns(pl.lit(1, dtype=pl.Int8).alias("is_open"))
     rows = rows.select([pl.col(name).cast(dtype) for name, dtype in schema.items()])
     return pl.concat([grid, rows]).sort(keys)
 
@@ -244,7 +263,7 @@ def build_features(
     forecasts. Consumers that need history only should filter on non-null
     ``sales``.
     """
-    grid = build_complete_grid(train)
+    grid = mark_open_days(build_complete_grid(train))
     if forecast_rows:
         grid = append_future(grid, horizon, future)
     return add_features(grid, horizon=horizon)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -45,7 +46,7 @@ def simulate_fifo(
     demand: pd.Series,
     forecast: pd.Series,
     shelf_life_days: int = 7,
-    policy: WastePolicy = WastePolicy("median"),
+    policy: WastePolicy = WastePolicy("forecast_only"),
     lost_margin: float = 1.0,
     waste_cost: float = 0.3,
 ) -> pd.DataFrame:
@@ -101,6 +102,65 @@ def simulate_fifo(
     return result.fillna({"service_level": 1.0})
 
 
+def default_policies(lost_margin: float = 1.0, waste_cost: float = 0.3) -> list[WastePolicy]:
+    """Forecast +10% buffer, forecast as-is, and the cost-optimal newsvendor."""
+    return [
+        WastePolicy("forecast_plus_10pct", 0.5, 0.10),
+        WastePolicy("forecast_only", 0.5, 0.0),
+        WastePolicy("newsvendor", critical_ratio(lost_margin, waste_cost), 0.0),
+    ]
+
+
+def simulate_portfolio(
+    frame: pd.DataFrame,
+    forecast_column: str,
+    shelf_life: Callable[[str], int],
+    lost_margin: float = 1.0,
+    waste_cost: float = 0.3,
+) -> pd.DataFrame:
+    """Simulate every store/family separately and aggregate per policy.
+
+    ``frame`` needs ``store_nbr``, ``family``, ``date``, ``sales`` and the
+    forecast column; each series uses its own family's shelf life. Summing
+    stores into one series first would let one store's surplus cover
+    another's shortfall and hide most of the waste.
+    """
+    totals: dict[str, dict[str, float]] = {}
+    for (_, family), series in frame.sort_values("date").groupby(["store_nbr", "family"], observed=True):
+        demand = series.set_index("date")["sales"]
+        forecast = series.set_index("date")[forecast_column]
+        for policy in default_policies(lost_margin, waste_cost):
+            result = simulate_fifo(
+                demand, forecast, shelf_life(str(family)), policy, lost_margin, waste_cost
+            )
+            total = totals.setdefault(
+                policy.name,
+                {"ordered": 0.0, "sold": 0.0, "demand": 0.0, "waste": 0.0, "cost": 0.0,
+                 "stockout_days": 0.0, "days": 0.0},
+            )
+            total["ordered"] += result["order"].sum()
+            total["sold"] += result["sold"].sum()
+            total["demand"] += result["demand"].sum()
+            total["waste"] += result["waste"].sum()
+            total["cost"] += result["cost"].sum()
+            total["stockout_days"] += float((result["stockout"] > 0).sum())
+            total["days"] += len(result)
+    return pd.DataFrame(
+        [
+            {
+                "policy": name,
+                "waste_pct": t["waste"] / max(t["ordered"], 1),
+                "stockout_rate": t["stockout_days"] / max(t["days"], 1),
+                "service_level": t["sold"] / max(t["demand"], 1),
+                "cost": t["cost"],
+                "units_ordered": t["ordered"],
+                "units_wasted": t["waste"],
+            }
+            for name, t in totals.items()
+        ]
+    )
+
+
 def compare_policies(
     demand: pd.Series,
     forecast: pd.Series,
@@ -108,12 +168,8 @@ def compare_policies(
     lost_margin: float = 1.0,
     waste_cost: float = 0.3,
 ) -> pd.DataFrame:
-    """Compare moving-average, median, and cost-optimal newsvendor ordering policies."""
-    policies = [
-        WastePolicy("moving_average", 0.5, 0.10),
-        WastePolicy("median", 0.5, 0.0),
-        WastePolicy("newsvendor", critical_ratio(lost_margin, waste_cost), 0.0),
-    ]
+    """Compare forecast +10%, forecast-only and cost-optimal newsvendor ordering policies."""
+    policies = default_policies(lost_margin, waste_cost)
     rows = []
     for policy in policies:
         result = simulate_fifo(demand, forecast, shelf_life_days, policy, lost_margin, waste_cost)

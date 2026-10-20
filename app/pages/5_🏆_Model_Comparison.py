@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
-from app.data_loader import load_all, load_holdout_metrics, load_waste_metrics
+from app.data_loader import load_all, load_holdout_metrics, load_report_table, load_waste_metrics
 from app.theme import apply_theme
 
 st.set_page_config(page_title="Model Comparison · FreshCast", page_icon="🏆", layout="wide")
@@ -28,25 +28,71 @@ apply_theme("""
 data, forecast_df, stores_df, results = load_all()
 holdout = load_holdout_metrics()
 waste   = load_waste_metrics()
+family_metrics = load_report_table("family_metrics")
+fold_metrics = load_report_table("backtest_metrics")
+
+
+def _label(name: str) -> str:
+    return {"lightgbm": "LightGBM", "xgboost": "XGBoost"}.get(name, name.replace("_", " ").title())
+
+
+def _highlight_closest_to_zero(column: pd.Series) -> list[str]:
+    best = column.abs().min()
+    return ["background-color:#14532d44" if abs(v) == best else "" for v in column]
+
 
 st.markdown("## 🏆 Model Comparison Leaderboard")
-st.caption("Holdout metrics (WAPE, Bias, RMSSE) and waste-policy cost rankings.")
+window = (f"{results['holdout_start']} → {results['holdout_end']}, "
+          f"{results.get('folds', 1)} × {results.get('horizon_days', '?')}-day windows"
+          if results.get("holdout_start") else "the final holdout")
+st.caption(f"Backtest over {window}: each model forecasts every window using only data available "
+           "before it starts. Waste results come from a per-store, per-category simulation.")
+
+headline = results.get("headline", {})
+if headline.get("available"):
+    model_name = _label(str(headline["forecast"]))
+    base_name = _label(str(headline["baseline_forecast"]))
+    st.markdown(f"### 🎯 {model_name} vs {base_name} forecasts ({headline['policy']} ordering)")
+    h1, h2, h3 = st.columns(3)
+    h1.metric("Total cost (relative units)", f"{headline['cost']:,.0f}",
+              f"{-headline['cost_reduction_pct']:.1%} vs {headline['baseline_cost']:,.0f}",
+              delta_color="inverse")
+    h2.metric("Service level", f"{headline['service_level']:.1%}",
+              f"{headline['service_level'] - headline['baseline_service_level']:+.1%} pts")
+    h3.metric("Units wasted", f"{headline['units_wasted']:,.0f}",
+              f"{headline['units_wasted'] - headline['baseline_units_wasted']:+,.0f} units",
+              delta_color="inverse")
+    if headline.get("note"):
+        st.info(headline["note"])
 
 if holdout.empty:
     st.warning("No holdout metrics found — run `python -m src.report` first.")
 else:
     # ── Leaderboard ───────────────────────────────────────────────────────────
     best_wape = holdout.loc[holdout["wape"].idxmin(), "model"]
-    st.markdown(f'<div class="leader-card">🥇 <span class="gold">Best WAPE: {best_wape.replace("_"," ").title()}</span> &nbsp;·&nbsp; WAPE = {holdout["wape"].min():.2%}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="leader-card">🥇 <span class="gold">Best WAPE: {_label(best_wape)}</span> &nbsp;·&nbsp; WAPE = {holdout["wape"].min():.2%}</div>', unsafe_allow_html=True)
 
     # ── Metrics table ─────────────────────────────────────────────────────────
-    st.markdown("### 📋 Holdout Metrics")
+    st.markdown("### 📋 Backtest Metrics")
     st.dataframe(
         holdout.style.format({"wape": "{:.2%}", "bias": "{:.2%}", "rmsse": "{:.3f}"})
                .highlight_min(subset=["wape", "rmsse"], color="#14532d44")
-               .highlight_min(subset=["bias"], color="#14532d44"),
+               .apply(_highlight_closest_to_zero, subset=["bias"]),
         width='stretch', hide_index=True,
     )
+
+    if not family_metrics.empty:
+        st.markdown("#### WAPE by category (lower is better)")
+        model_columns = [c for c in family_metrics.columns if c != "family"]
+        st.dataframe(
+            family_metrics.style.format({c: "{:.1%}" for c in model_columns})
+                          .highlight_min(subset=model_columns, axis=1, color="#14532d44"),
+            width='stretch', hide_index=True,
+        )
+    if not fold_metrics.empty:
+        with st.expander("Per-window results"):
+            st.dataframe(fold_metrics.style.format({"wape": "{:.2%}", "bias": "{:.2%}", "rmsse": "{:.3f}"}),
+                         width='stretch', hide_index=True)
 
     # ── Radar / bar charts ────────────────────────────────────────────────────
     col1, col2 = st.columns(2)

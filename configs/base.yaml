@@ -8,6 +8,14 @@ paths:
   interim_dir: data/interim
   processed_dir: data/processed
   artifacts_dir: data/artifacts
+  reports_dir: reports/generated
+
+evaluation:
+  # Rolling-origin backtest: `folds` consecutive windows of `horizon_days`
+  # each at the end of the history (3 x 14 = the last 42 days).
+  folds: 3
+  models:
+    - lightgbm
 
 dataset:
   # Store Sales is the first prototype because its train schema is compact.
@@ -28,27 +36,31 @@ dataset:
     transactions: transactions.csv
 
 scope:
+  # Family names must match the data exactly (the pipeline fails on unknown
+  # names). Empty lists mean "all".
   families:
     - PRODUCE
     - DAIRY
     - MEATS
     - POULTRY
-    - BAKERY
+    - BREAD/BAKERY
     - DELI
     - EGGS
     - SEAFOOD
     - PREPARED FOODS
   stores: []
-  items: []
 
 assumptions:
+  # Simulation costs per unit, in relative units (not a currency).
+  lost_margin: 1.0
+  waste_cost: 0.3
   shelf_life_days:
     default: 7
     PRODUCE: 3
     DAIRY: 10
     MEATS: 5
     POULTRY: 5
-    BAKERY: 3
+    BREAD/BAKERY: 3
     DELI: 5
     EGGS: 21
     SEAFOOD: 3

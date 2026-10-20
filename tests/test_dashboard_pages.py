@@ -51,7 +51,7 @@ def _write_artifacts(root: Path) -> None:
          "bias": [0.01, -0.02], "rmsse": [1.0, 0.9]}
     ).to_csv(root / "holdout_metrics.csv", index=False)
     pd.DataFrame(
-        {"policy": ["moving_average", "median", "newsvendor"], "waste_pct": [0.1, 0.05, 0.08],
+        {"policy": ["forecast_plus_10pct", "forecast_only", "newsvendor"], "waste_pct": [0.1, 0.05, 0.08],
          "stockout_rate": [0.1, 0.4, 0.2], "service_level": [0.98, 0.9, 0.95],
          "cost": [100.0, 400.0, 150.0]}
     ).to_csv(root / "waste_policy_metrics.csv", index=False)

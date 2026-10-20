@@ -64,6 +64,13 @@ def load_alerts() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
+def load_report_table(name: str) -> pd.DataFrame:
+    """A CSV written by ``src.report`` (e.g. ``family_metrics``), or empty."""
+    path = HOLDOUT_PATH.parent / f"{name}.csv"
+    return pd.read_csv(path) if path.exists() else pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False)
 def load_holdout_metrics() -> pd.DataFrame:
     if HOLDOUT_PATH.exists():
         return pd.read_csv(HOLDOUT_PATH)
