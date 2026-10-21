@@ -8,9 +8,11 @@ from app.insights import (
     HIGH_LABEL,
     LOW_LABEL,
     compute_alerts,
+    model_label,
     next_day_forecast,
     rule_based_answer,
     run_pipeline,
+    same_weekday_sales,
     stockout_risk,
 )
 
@@ -41,12 +43,42 @@ def test_stockout_risk_is_share_of_days_above_order() -> None:
     assert stockout_risk(pd.Series([], dtype=float), 1.0) == 0.0
 
 
+def test_same_weekday_sales_picks_the_last_eight_matching_days() -> None:
+    sales = pd.Series(range(70), index=pd.date_range("2024-01-01", periods=70), dtype=float)
+    target = pd.Timestamp("2024-03-11")  # the day after the history, a Monday
+    picked = same_weekday_sales(sales, target)
+    assert len(picked) == 8
+    assert (picked.index.weekday == target.weekday()).all()
+    assert picked.index.max() == target - pd.Timedelta(days=7)
+
+
+def test_accurate_weekday_forecast_is_not_flagged_because_of_weekend_peaks() -> None:
+    # Weekdays sell 10, weekends 30. An exact weekday forecast used to be
+    # compared with every recent day, so the weekend peaks made it look risky.
+    dates = pd.date_range("2024-01-01", periods=56)
+    history = pd.DataFrame({"date": dates, "store_nbr": 1, "family": "DAIRY",
+                            "sales": [30.0 if d.weekday() >= 5 else 10.0 for d in dates]})
+    weekday_forecast = pd.DataFrame({"store_nbr": [1], "family": ["DAIRY"],
+                                     "date": [pd.Timestamp("2024-02-26")], "forecast": [10.0]})
+    alerts = compute_alerts(history, weekday_forecast)
+    assert alerts.loc[0, "Stockout Risk"] == 0.0
+    assert alerts.loc[0, "Risk Level"] == LOW_LABEL
+    assert stockout_risk(history["sales"].tail(28), 10.0) > 0.25  # what the old metric saw
+
+
+def test_model_label() -> None:
+    assert model_label("lightgbm") == "LightGBM"
+    assert model_label("moving_average") == "Moving Average"
+
+
 def test_next_day_forecast_prefers_model_and_falls_back_to_baseline() -> None:
     history = _history({(1, "DAIRY"): 10, (2, "DAIRY"): 20})
     forecast = _forecast({(1, "DAIRY"): 4.0})
     result = next_day_forecast(history, forecast).set_index(["store_nbr", "family"])
     assert result.loc[(1, "DAIRY"), "forecast"] == 4.0  # first future day, not later ones
     assert result.loc[(1, "DAIRY"), "source"] == "model"
+    assert result.loc[(1, "DAIRY"), "date"] == pd.Timestamp("2024-02-10")
+    assert result.loc[(2, "DAIRY"), "date"] == history["date"].max() + pd.Timedelta(days=1)
     assert result.loc[(2, "DAIRY"), "source"] == "moving average"
     assert result.loc[(2, "DAIRY"), "forecast"] == pytest.approx(
         history[history.store_nbr == 2]["sales"].tail(14).mean()

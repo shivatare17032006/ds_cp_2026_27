@@ -1,6 +1,7 @@
 """Model Comparison — leaderboard with holdout metrics and policy rankings."""
 
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -9,11 +10,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from app.data_loader import load_all, load_holdout_metrics, load_report_table, load_waste_metrics
+from app.insights import model_label
 from app.theme import apply_theme
 
 st.set_page_config(page_title="Model Comparison · FreshCast", page_icon="🏆", layout="wide")
@@ -30,10 +32,7 @@ holdout = load_holdout_metrics()
 waste   = load_waste_metrics()
 family_metrics = load_report_table("family_metrics")
 fold_metrics = load_report_table("backtest_metrics")
-
-
-def _label(name: str) -> str:
-    return {"lightgbm": "LightGBM", "xgboost": "XGBoost"}.get(name, name.replace("_", " ").title())
+_label = model_label
 
 
 def _highlight_closest_to_zero(column: pd.Series) -> list[str]:

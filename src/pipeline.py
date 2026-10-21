@@ -7,7 +7,7 @@ from pathlib import Path
 
 import polars as pl
 
-from src.config import load_config
+from src.config import DEFAULT_CONFIG, load_config
 from src.data.features import build_features, join_context
 from src.data.ingest import convert_raw_to_parquet
 
@@ -64,9 +64,12 @@ def run(config_path: str | Path) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/base.yaml")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     args = parser.parse_args()
-    print(run(args.config))
+    try:
+        print(run(args.config))
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(f"error: {exc}") from None
 
 
 if __name__ == "__main__":

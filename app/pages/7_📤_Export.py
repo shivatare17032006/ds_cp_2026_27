@@ -1,6 +1,7 @@
 """Export & Reports page — download CSV/Excel and view raw data."""
 
 from __future__ import annotations
+
 import importlib.util
 import io
 import sys
@@ -10,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import pandas as pd
 import streamlit as st
 
 from app.data_loader import load_all, load_holdout_metrics, load_waste_metrics

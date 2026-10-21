@@ -40,6 +40,9 @@ def test_inventory_is_conserved(policy: str) -> None:
 
 def test_critical_ratio() -> None:
     assert critical_ratio(1.0, 0.3) == pytest.approx(1 / 1.3)
+    # Zero waste cost would mean a 100% quantile; it is capped so simulation still runs.
+    assert critical_ratio(1.0, 0.0) == pytest.approx(0.99)
+    simulate_fifo(_series([1, 2, 3]), _series([1, 2, 3]), 3, WastePolicy("newsvendor", critical_ratio(1.0, 0.0)))
     with pytest.raises(ValueError):
         critical_ratio(0.0, 0.3)
 

@@ -1,6 +1,7 @@
 """FreshCast — Home dashboard with live KPIs and pipeline retraining."""
 
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 

@@ -42,10 +42,12 @@ def tune_lightgbm(
     x_train, x_valid = time_split(history, valid_days)
     if x_train.empty or x_valid.empty:
         raise ValueError("Not enough history for the requested validation window.")
-    actual = np.expm1(x_valid["target"].to_numpy())
+    actual = x_valid["sales"].to_numpy()
 
     def objective(trial: Any) -> float:
         model = LGBMRegressor(
+            objective="tweedie",
+            tweedie_variance_power=trial.suggest_float("tweedie_variance_power", 1.05, 1.6),
             n_estimators=trial.suggest_int("n_estimators", 100, 500),
             learning_rate=trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
             num_leaves=trial.suggest_int("num_leaves", 15, 127),
@@ -53,8 +55,8 @@ def tune_lightgbm(
             random_state=seed,
             verbosity=-1,
         )
-        model.fit(x_train[feature_columns], x_train["target"])
-        pred = np.expm1(model.predict(x_valid[feature_columns])).clip(0)
+        model.fit(x_train[feature_columns], x_train["sales"])
+        pred = model.predict(x_valid[feature_columns]).clip(0)
         return wape(actual, pred)
 
     study = optuna.create_study(

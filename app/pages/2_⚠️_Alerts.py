@@ -1,6 +1,7 @@
 """Alerts & Anomaly Detection page — red/yellow/green risk badges per store+category."""
 
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -8,12 +9,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 from app.data_loader import load_alerts, load_all
-from app.insights import HIGH_LABEL, HIGH_RISK, LOW_LABEL, MEDIUM_LABEL, MEDIUM_RISK
+from app.insights import HIGH_LABEL, HIGH_RISK, LOW_LABEL, MEDIUM_LABEL, MEDIUM_RISK, RISK_WEEKS
 from app.theme import PLOT_LAYOUT, apply_theme
 
 st.set_page_config(page_title="Alerts · FreshCast", page_icon="⚠️", layout="wide")
@@ -23,9 +23,10 @@ data, forecast_df, stores_df, results = load_all()
 
 st.markdown("## ⚠️ Alerts & Anomaly Detection")
 st.caption(
-    "Stockout risk = share of the last 28 days on which demand exceeded the next-day forecast, "
-    "i.e. the chance of running out if you order exactly the forecast. "
-    f"High above {HIGH_RISK:.0%}, medium above {MEDIUM_RISK:.0%}; sharp demand spikes and "
+    f"Stockout risk = share of the last {RISK_WEEKS} same weekdays on which demand exceeded the "
+    "next-day forecast, i.e. the chance of running out if you order exactly the forecast. An accurate "
+    f"forecast is beaten about half the time, so high means above {HIGH_RISK:.0%} and medium above "
+    f"{MEDIUM_RISK:.0%}; sharp demand spikes and "
     "frequent zero-sales days also raise the level."
 )
 

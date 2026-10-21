@@ -10,6 +10,7 @@ import pandas as pd
 
 RESIDUAL_WINDOW = 28
 MIN_RESIDUAL_HISTORY = 7
+MAX_SERVICE_QUANTILE = 0.99
 
 
 @dataclass(frozen=True)
@@ -27,10 +28,14 @@ class WastePolicy:
 
 
 def critical_ratio(lost_margin: float, waste_cost: float) -> float:
-    """Return the newsvendor service quantile ``cu / (cu + co)``."""
+    """Return the newsvendor service quantile ``cu / (cu + co)``.
+
+    Capped at ``MAX_SERVICE_QUANTILE``: with a waste cost of zero the
+    formula gives 1.0, a quantile no finite order can reach.
+    """
     if lost_margin <= 0 or waste_cost < 0:
         raise ValueError("lost_margin must be positive and waste_cost non-negative")
-    return lost_margin / (lost_margin + waste_cost)
+    return min(lost_margin / (lost_margin + waste_cost), MAX_SERVICE_QUANTILE)
 
 
 def _order_up_to(policy: WastePolicy, forecast: float, residuals: list[float]) -> float:

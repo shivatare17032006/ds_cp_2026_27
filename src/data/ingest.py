@@ -7,7 +7,7 @@ from pathlib import Path
 
 import polars as pl
 
-from src.config import PipelineConfig, load_config
+from src.config import DEFAULT_CONFIG, PipelineConfig, load_config
 
 DATE_COLUMNS = {"date", "Date"}
 REQUIRED_TRAIN_COLUMNS = {"date", "store_nbr", "family", "sales", "onpromotion"}
@@ -81,7 +81,7 @@ def convert_raw_to_parquet(config: PipelineConfig) -> list[Path]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/base.yaml")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     args = parser.parse_args()
     outputs = convert_raw_to_parquet(load_config(args.config))
     for output in outputs:

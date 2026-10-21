@@ -12,9 +12,13 @@ import pandas as pd
 
 KEYS = ["store_nbr", "family"]
 RISK_WINDOW = 28
+RISK_WEEKS = 8
 BASELINE_WINDOW = 14
-HIGH_RISK = 0.6
-MEDIUM_RISK = 0.4
+# Share of the last RISK_WEEKS same-weekday days on which demand beat the
+# forecast. An accurate forecast is beaten about half the time, so only clear
+# majorities count: 7-8 of 8 (≈3.5% chance by luck) is high, 6 of 8 medium.
+HIGH_RISK = 0.8
+MEDIUM_RISK = 0.7
 HIGH_LABEL, MEDIUM_LABEL, LOW_LABEL = "🔴 High", "🟡 Medium", "🟢 Low"
 
 PIPELINE_STEPS: list[tuple[str, list[str]]] = [
@@ -24,14 +28,29 @@ PIPELINE_STEPS: list[tuple[str, list[str]]] = [
 ]
 
 
+def model_label(name: str) -> str:
+    """Display name for a model id, e.g. ``lightgbm`` -> ``LightGBM``."""
+    return {"lightgbm": "LightGBM", "xgboost": "XGBoost"}.get(name, name.replace("_", " ").title())
+
+
 def stockout_risk(recent_sales: pd.Series, order: float) -> float:
-    """Share of recent days on which demand exceeded ``order``.
+    """Share of the given days on which demand exceeded ``order``.
 
     This is the empirical chance of a stockout if ``order`` units were
-    available every day, i.e. if the store ordered exactly the forecast.
+    available, i.e. if the store ordered exactly the forecast.
     """
     recent = recent_sales.dropna()
     return float((recent > order).mean()) if len(recent) else 0.0
+
+
+def same_weekday_sales(sales_by_date: pd.Series, target: pd.Timestamp, weeks: int = RISK_WEEKS) -> pd.Series:
+    """Sales on the ``weeks`` most recent days with ``target``'s weekday.
+
+    Comparing a forecast with every recent day would count ordinary weekend
+    peaks as forecast misses for a weekday forecast.
+    """
+    dates = [pd.Timestamp(target) - pd.Timedelta(days=7 * k) for k in range(1, weeks + 1)]
+    return sales_by_date.reindex(pd.DatetimeIndex(dates)).dropna()
 
 
 def risk_level(risk: float, spike: float = 0.0, zero_rate: float = 0.0) -> str:
@@ -43,31 +62,31 @@ def risk_level(risk: float, spike: float = 0.0, zero_rate: float = 0.0) -> str:
 
 
 def next_day_forecast(history: pd.DataFrame, forecast: pd.DataFrame) -> pd.DataFrame:
-    """Next-day forecast per store/family: the model's first future day,
-    else a 14-day moving average of sales."""
+    """Next-day forecast and its ``date`` per store/family: the model's first
+    future day, else a 14-day moving average for the day after the history."""
     ordered = history.sort_values("date")
-    baseline = (
-        ordered.groupby(KEYS, observed=True)["sales"]
-        .apply(lambda s: s.tail(BASELINE_WINDOW).mean())
-        .rename("forecast")
-        .reset_index()
-        .assign(source="moving average")
-    )
+    grouped = ordered.groupby(KEYS, observed=True)
+    baseline = pd.DataFrame(
+        {
+            "forecast": grouped["sales"].apply(lambda s: s.tail(BASELINE_WINDOW).mean()),
+            "date": pd.to_datetime(grouped["date"].max()) + pd.Timedelta(days=1),
+        }
+    ).reset_index().assign(source="moving average")
     baseline["family"] = baseline["family"].astype(str)
     if forecast.empty:
-        return baseline
+        return baseline[[*KEYS, "forecast", "date", "source"]]
     model = (
-        forecast.assign(family=forecast["family"].astype(str))
+        forecast.assign(family=forecast["family"].astype(str), date=pd.to_datetime(forecast["date"]))
         .sort_values("date")
         .groupby(KEYS, observed=True)
-        .head(1)[[*KEYS, "forecast"]]
+        .head(1)[[*KEYS, "forecast", "date"]]
         .assign(source="model")
     )
     merged = baseline.merge(model, on=KEYS, how="left", suffixes=("_baseline", ""))
     missing = merged["forecast"].isna()
-    merged.loc[missing, "forecast"] = merged.loc[missing, "forecast_baseline"]
-    merged.loc[missing, "source"] = merged.loc[missing, "source_baseline"]
-    return merged[[*KEYS, "forecast", "source"]]
+    for column in ("forecast", "date", "source"):
+        merged.loc[missing, column] = merged.loc[missing, f"{column}_baseline"]
+    return merged[[*KEYS, "forecast", "date", "source"]]
 
 
 def compute_alerts(history: pd.DataFrame, forecast: pd.DataFrame) -> pd.DataFrame:
@@ -81,7 +100,9 @@ def compute_alerts(history: pd.DataFrame, forecast: pd.DataFrame) -> pd.DataFram
         spike = (avg7 / max(avg_prev7, 0.1)) - 1
         zero_rate = float((sales.tail(RISK_WINDOW) == 0).mean())
         order = float(next_day.loc[(store, str(family)), "forecast"])
-        risk = stockout_risk(sales.tail(RISK_WINDOW), order)
+        target = pd.Timestamp(next_day.loc[(store, str(family)), "date"])
+        by_date = group.assign(date=pd.to_datetime(group["date"])).set_index("date")["sales"]
+        risk = stockout_risk(same_weekday_sales(by_date, target), order)
         records.append(
             {
                 "Store": store,
@@ -160,7 +181,7 @@ def rule_based_answer(
             return "No holdout metrics available. Run `python -m src.report` first."
         best = holdout.loc[holdout["wape"].idxmin()]
         return (
-            f"📊 **Best model: {best['model'].replace('_', ' ').title()}**\n"
+            f"📊 **Best model: {model_label(str(best['model']))}**\n"
             f"- WAPE (weighted absolute % error, lower is better): {best['wape']:.2%}\n"
             f"- Bias: {best['bias']:.2%}\n- RMSSE: {best['rmsse']:.3f}"
         )

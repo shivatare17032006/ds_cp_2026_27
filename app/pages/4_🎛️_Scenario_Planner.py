@@ -1,6 +1,7 @@
 """What-If Scenario Planner — interactive sliders, live waste + cost recalculation."""
 
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -14,7 +15,7 @@ import streamlit as st
 
 from app.data_loader import load_all
 from app.theme import apply_theme
-from src.waste import compare_policies, simulate_fifo, WastePolicy, critical_ratio
+from src.waste import WastePolicy, critical_ratio, simulate_fifo
 
 st.set_page_config(page_title="Scenario Planner · FreshCast", page_icon="🎛️", layout="wide")
 apply_theme("""

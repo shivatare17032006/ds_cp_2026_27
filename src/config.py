@@ -8,6 +8,9 @@ from typing import Any
 
 import yaml
 
+# The repository's config, independent of the current working directory.
+DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "base.yaml"
+
 
 @dataclass(frozen=True)
 class PipelineConfig:

@@ -60,11 +60,19 @@ def add_features(grid: pl.LazyFrame, horizon: int = 14) -> pl.LazyFrame:
     """Add calendar, lagged, rolling and exponentially weighted demand features.
 
     Every demand-derived feature is shifted by ``horizon`` or more, ensuring
-    that a direct horizon forecast cannot read future target values.
+    that a direct horizon forecast cannot read future target values. Days
+    before a store/family's first sale count as unknown, not as zero demand,
+    so a newly stocked item's first weeks are not forecast from fake zeros
+    (those rows keep null lags and are dropped from training as warm-up).
     """
     if horizon < 1:
         raise ValueError("horizon must be positive")
     keys = ["store_nbr", "family"]
+    first_sale = pl.col("date").filter(pl.col("sales") > 0).min().over(keys)
+    grid = grid.with_columns(
+        pl.when(pl.col("date") < first_sale).then(None).otherwise(pl.col("sales")).alias("_demand")
+    )
+    demand = pl.col("_demand")
     result = grid.with_columns(
         [
             pl.col("sales").log1p().alias("target"),
@@ -78,7 +86,7 @@ def add_features(grid: pl.LazyFrame, horizon: int = 14) -> pl.LazyFrame:
         ]
     )
     for window in DEFAULT_WINDOWS:
-        shifted = pl.col("sales").shift(horizon).over(keys)
+        shifted = demand.shift(horizon).over(keys)
         result = result.with_columns(
             [
                 shifted.rolling_mean(window).over(keys).alias(f"sales_mean_{window}"),
@@ -90,19 +98,19 @@ def add_features(grid: pl.LazyFrame, horizon: int = 14) -> pl.LazyFrame:
         )
     result = result.with_columns(
         [
-            pl.col("sales").shift(horizon).over(keys).alias(f"sales_lag_{horizon}"),
-            pl.col("sales").shift(horizon + 7).over(keys).alias(f"sales_lag_{horizon + 7}"),
+            demand.shift(horizon).over(keys).alias(f"sales_lag_{horizon}"),
+            demand.shift(horizon + 7).over(keys).alias(f"sales_lag_{horizon + 7}"),
         ]
     )
     result = result.with_columns(
-        pl.col("sales").shift(horizon).ewm_mean(span=14, adjust=False).over(keys).alias("sales_ewm_14")
+        demand.shift(horizon).ewm_mean(span=14, adjust=False).over(keys).alias("sales_ewm_14")
     )
     return result.with_columns(
         [
             pl.col("store_nbr").cast(pl.String).alias("store_id"),
             pl.col("family").cast(pl.String),
         ]
-    )
+    ).drop("_demand")
 
 
 def join_context(

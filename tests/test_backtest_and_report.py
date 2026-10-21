@@ -71,6 +71,37 @@ def test_mark_open_days_flags_prelaunch_and_store_closures() -> None:
     assert marked.filter(pl.col("family") == "PRODUCE")["is_open"].to_list() == [0, 0, 1, 0, 1]
 
 
+def test_lags_do_not_treat_days_before_first_sale_as_zero_demand() -> None:
+    dates = [START + timedelta(days=d) for d in range(40)]
+    frame = pl.DataFrame(
+        {"date": dates, "store_nbr": [1] * 40, "family": ["DAIRY"] * 40,
+         # Not stocked for the first 20 days, then a steady 10 a day.
+         "sales": [0.0] * 20 + [10.0] * 20, "onpromotion": [0] * 40}
+    )
+    features = build_features(frame.lazy(), horizon=HORIZON, forecast_rows=False).collect()
+    launch = START + timedelta(days=20)
+    after = features.filter(pl.col("date") >= launch + timedelta(days=HORIZON))
+    # A lag that reaches back before the launch is unknown, not zero.
+    assert after.filter(pl.col("date") < launch + timedelta(days=HORIZON + 6))["sales_mean_7"].null_count() == 6
+    assert after.filter(pl.col("date") >= launch + timedelta(days=HORIZON + 6))["sales_mean_7"].to_list() == [10.0] * 7
+    assert after[f"sales_lag_{HORIZON}"].to_list() == [10.0] * 13
+
+
+def test_cli_reports_missing_inputs_without_a_traceback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import src.report
+
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "base.yaml").write_text(
+        "project: {seed: 1, dataset: store_sales, horizon_days: 7}\n"
+        "paths: {raw_dir: raw, interim_dir: interim, processed_dir: processed, artifacts_dir: artifacts}\n"
+        "dataset: {store_sales: {train: train.csv}}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("sys.argv", ["report", "--config", str(tmp_path / "configs" / "base.yaml")])
+    with pytest.raises(SystemExit, match="error: Missing features: .*Run src.pipeline first"):
+        src.report.main()
+
+
 def test_closed_days_are_not_training_targets() -> None:
     features = build_features(_train().lazy(), horizon=HORIZON).collect().to_pandas()
     closed_day = pd.Timestamp(START + timedelta(days=60))

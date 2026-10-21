@@ -11,10 +11,10 @@ import pytest
 pytest.importorskip("streamlit")
 pytest.importorskip("plotly")
 
-import streamlit as st  # noqa: E402
-from streamlit.testing.v1 import AppTest  # noqa: E402
+import streamlit as st
+from streamlit.testing.v1 import AppTest
 
-from app import data_loader, insights  # noqa: E402
+from app import data_loader, insights
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 PAGES = [APP_DIR / "streamlit_app.py", *sorted((APP_DIR / "pages").glob("*.py"))]

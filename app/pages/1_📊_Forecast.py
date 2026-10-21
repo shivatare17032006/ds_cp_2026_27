@@ -1,6 +1,7 @@
 """Demand Forecast page — interactive Plotly charts with confidence bands."""
 
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -13,7 +14,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.data_loader import load_all
-from app.insights import HIGH_RISK, MEDIUM_RISK, RISK_WINDOW, stockout_risk as estimate_stockout_risk
+from app.insights import HIGH_RISK, MEDIUM_RISK, RISK_WEEKS, same_weekday_sales
+from app.insights import stockout_risk as estimate_stockout_risk
 from app.theme import PLOT_LAYOUT, apply_theme
 
 st.set_page_config(page_title="Forecast · FreshCast", page_icon="📊", layout="wide")
@@ -74,7 +76,10 @@ combined["lower"] = (combined["forecast"] * (1 - ci_pct / 100)).clip(lower=0)
 combined["upper"] = combined["forecast"] * (1 + ci_pct / 100)
 
 avg_sales = float(sel["sales"].tail(28).mean())
-stockout_risk = estimate_stockout_risk(sel["sales"].tail(RISK_WINDOW), forecast_value)
+forecast_date = fut["date"].iloc[0] if not fut.empty else sel["date"].max() + pd.Timedelta(days=1)
+stockout_risk = estimate_stockout_risk(
+    same_weekday_sales(sel.set_index("date")["sales"], forecast_date), forecast_value
+)
 trend_7 = sel["sales"].tail(7).mean() - sel["sales"].tail(14).head(7).mean()
 
 # ── KPI cards ─────────────────────────────────────────────────────────────────
@@ -102,8 +107,8 @@ c4.markdown(f"""<div class="metric-card">
 </div>""", unsafe_allow_html=True)
 
 st.caption(
-    f"*Share of the last {RISK_WINDOW} days on which demand exceeded the next-day forecast: "
-    "the chance of running out if you order exactly the forecast."
+    f"*Share of the last {RISK_WEEKS} {forecast_date:%A}s on which demand exceeded the forecast for "
+    f"{forecast_date:%a %d %b}: the chance of running out if you order exactly the forecast."
 )
 
 # Alert

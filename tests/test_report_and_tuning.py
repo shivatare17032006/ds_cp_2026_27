@@ -50,11 +50,11 @@ def test_time_split_separates_dates() -> None:
 def test_tuning_runs_with_seeded_sampler() -> None:
     pytest.importorskip("optuna")
     pytest.importorskip("lightgbm")
-    from tests.test_leakage_and_forecast import _features, _train
     from src.tuning import tune_lightgbm
+    from tests.test_leakage_and_forecast import _features, _train
 
     features = _features(_train()).to_pandas()
     first = tune_lightgbm(features, trials=2, valid_days=7)
     second = tune_lightgbm(features, trials=2, valid_days=7)
     assert first == second
-    assert {"n_estimators", "learning_rate", "num_leaves", "min_child_samples"} == set(first)
+    assert {"tweedie_variance_power", "n_estimators", "learning_rate", "num_leaves", "min_child_samples"} == set(first)

@@ -5,12 +5,11 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-from pathlib import Path
 
 import pandas as pd
 
 from src.backtest import BASELINES, backtest, summarize
-from src.config import PipelineConfig, load_config
+from src.config import DEFAULT_CONFIG, PipelineConfig, load_config
 from src.waste import simulate_portfolio
 
 HEADLINE_POLICY = "newsvendor"
@@ -64,7 +63,10 @@ def generate_report(config: PipelineConfig) -> dict[str, object]:
     (every forecast x policy), ``waste_policy_metrics.csv`` (policies for
     the best forecast) and ``results.json``.
     """
-    features = pd.read_parquet(config.processed_dir / "features.parquet")
+    feature_path = config.processed_dir / "features.parquet"
+    if not feature_path.exists():
+        raise FileNotFoundError(f"Missing features: {feature_path}. Run src.pipeline first.")
+    features = pd.read_parquet(feature_path)
     models = available_models(config.models)
     predictions = backtest(features, config.horizon, config.backtest_folds, models, config.seed)
     evaluated = [*BASELINES, *models]
@@ -118,9 +120,12 @@ def generate_report(config: PipelineConfig) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/base.yaml")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     args = parser.parse_args()
-    print(json.dumps(generate_report(load_config(args.config)), indent=2))
+    try:
+        print(json.dumps(generate_report(load_config(args.config)), indent=2))
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(f"error: {exc}") from None
 
 
 if __name__ == "__main__":

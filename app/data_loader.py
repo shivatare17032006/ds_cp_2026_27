@@ -1,6 +1,7 @@
 """Shared data loader — cached once, imported by every page."""
 
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path

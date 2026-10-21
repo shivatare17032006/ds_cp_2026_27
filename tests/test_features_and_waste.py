@@ -1,8 +1,9 @@
-import pandas as pd
-import polars as pl
 from datetime import date
 
-from src.data.features import build_complete_grid, add_features
+import pandas as pd
+import polars as pl
+
+from src.data.features import add_features, build_complete_grid
 from src.waste import WastePolicy, simulate_fifo
 
 

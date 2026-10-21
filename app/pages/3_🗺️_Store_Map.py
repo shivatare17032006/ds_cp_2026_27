@@ -1,6 +1,7 @@
 """Ecuador Store Map — demand bubbles and waste risk by location."""
 
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -10,7 +11,6 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 from app.data_loader import ECUADOR_COORDS, load_alerts, load_all

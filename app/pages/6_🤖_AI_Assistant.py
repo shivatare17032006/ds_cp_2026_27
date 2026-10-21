@@ -1,6 +1,7 @@
 """AI Chatbot page — Gemini-powered Q&A grounded in the supply chain data."""
 
 from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
@@ -91,7 +92,8 @@ def build_context() -> str:
     lines.append(top_cats.to_string(index=False))
 
     if not alerts.empty:
-        lines.append("\nHighest stockout risk (share of last 28 days demand exceeded the next-day forecast):")
+        lines.append("\nHighest stockout risk (share of the last 8 same weekdays on which demand "
+                     "exceeded the next-day forecast; about 50% is normal):")
         lines.append(alerts.head(10)[["Store", "Category", "Stockout Risk", "Risk Level"]].to_string(index=False))
 
     if not holdout.empty:

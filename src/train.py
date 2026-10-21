@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.config import load_config
+from src.config import DEFAULT_CONFIG, load_config
 from src.forecasting import train_global_model
 
 
@@ -32,10 +32,13 @@ def run(config_path: str | Path, model_name: str = "lightgbm") -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/base.yaml")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--model", choices=["lightgbm", "xgboost"], default="lightgbm")
     args = parser.parse_args()
-    print(run(args.config, args.model))
+    try:
+        print(run(args.config, args.model))
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(f"error: {exc}") from None
 
 
 if __name__ == "__main__":

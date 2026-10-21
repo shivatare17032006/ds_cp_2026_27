@@ -36,6 +36,10 @@ python -m src.train
 pytest
 ```
 
+After installing, the same steps are available from any folder as
+`freshcast-pipeline`, `freshcast-train` and `freshcast-report`; each uses
+`configs/base.yaml` unless `--config` is given.
+
 The pipeline validates the configured raw files, writes normalized Parquet
 tables to `data/interim/`, and writes leakage-safe features to
 `data/processed/features.parquet`. It does not download Kaggle data or infer
@@ -61,9 +65,10 @@ results.
 The AI Assistant page answers common questions offline. For free-form
 answers it calls Google Gemini: install the `ai` extra
 (`pip install -e ".[ai]"`) and enter a Gemini API key in the sidebar or set
-`GEMINI_API_KEY`. Stockout risk on the dashboard is the share of the last 28
-days on which demand exceeded the next-day forecast; simulated costs are in
-relative units, not a currency.
+`GEMINI_API_KEY`. Stockout risk on the dashboard is the share of the last 8
+same weekdays on which demand exceeded the next-day forecast (an accurate
+forecast scores about 50%, so only 6+ of 8 is flagged); simulated costs are
+in relative units, not a currency.
 
 Generate the backtest and simulated waste-policy report:
 
